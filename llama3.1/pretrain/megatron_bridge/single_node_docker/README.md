@@ -26,9 +26,15 @@ orchestration around it is reimplemented:
 | `NsysPlugin` wrapping each task in `nsys profile` | `NSYS_ENABLE=1` in the rank wrapper |
 | `llmb-run jobs` (refreshes Slurm state) | [`parse_results_local.py`](parse_results_local.py) |
 
-[`check_arch_support.sh`](check_arch_support.sh) is an extra, not a port of
-anything: it answers "can this container train on this GPU?" in about a minute,
-which is worth knowing before committing to a 50-step run on new silicon.
+Two extras, not ports of anything:
+
+* [`check_arch_support.sh`](check_arch_support.sh) answers "can this container
+  train on this GPU?" in about a minute, which is worth knowing before
+  committing to a 50-step run on new silicon.
+* [`collect_arch_evidence.sh`](collect_arch_evidence.sh) writes the same
+  findings per image as Markdown with full, untruncated tracebacks — the
+  artifact to attach to a vendor ticket. Its output for this machine is checked
+  in as [`ARCH_SUPPORT_REPORT.md`](ARCH_SUPPORT_REPORT.md).
 
 `perf_env_local.py` reimplements the environment *rules* only. The *data* those
 rules branch on — parallelism, batch sizes, CUDA-graph mode, MoE backend, FSDP
