@@ -35,16 +35,29 @@
 #   IMAGE           override the container image reference
 #   SKIP_PULL       true to skip `docker pull`
 #   SKIP_CLONE      true to skip the Megatron-Bridge clone
-#   PREFETCH_HF     true to pre-download the Llama 3 8B tokenizer into HF_HOME
-#                   (needs HF_TOKEN and Llama 3 access)
+#   RECIPE_DIR      recipe to install (default: the one this script sits in)
+#   MODEL_SIZE      selects which declared HF repo to prefetch (default 8b)
+#   PREFETCH_HF     true to pre-download the model config into HF_HOME
+#                   (needs HF_TOKEN, and access if the repo is gated)
 
 set -eu -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-RECIPE_DIR=$(dirname "$SCRIPT_DIR")
+# Defaults to the recipe this script sits inside; point it elsewhere to install
+# a different megatron_bridge recipe with the same tooling.
+RECIPE_DIR=${RECIPE_DIR:-$(dirname "$SCRIPT_DIR")}
+RECIPE_DIR=$(cd -- "$RECIPE_DIR" && pwd)
 
-WORKLOAD_TYPE=pretrain
-MODEL_NAME=llama3.1
+# Workload identity from the recipe's own metadata, so the install layout
+# matches what its Slurm path expects.
+read -r WORKLOAD_TYPE MODEL_NAME < <(
+    python3 -c '
+import sys, yaml
+g = yaml.safe_load(open(sys.argv[1]))["general"]
+print(g["workload_type"], g["workload"])
+' "$RECIPE_DIR/metadata.yaml"
+)
+: "${MODEL_NAME:?could not read general.workload from $RECIPE_DIR/metadata.yaml}"
 
 LLMB_INSTALL=${LLMB_INSTALL:?LLMB_INSTALL is a required variable (e.g. /mnt/nvme/llmb)}
 LLMB_WORKLOAD=$LLMB_INSTALL/workloads/${WORKLOAD_TYPE}_${MODEL_NAME}
@@ -54,18 +67,19 @@ PREFETCH_HF=${PREFETCH_HF:-false}
 MODEL_SIZE=${MODEL_SIZE:-8b}
 MODEL_SIZE=${MODEL_SIZE,,}
 
-# The 8B/70B configs reuse Megatron-Bridge's llama3 recipes, so they read the
-# Llama *3* repos -- which are gated separately from Llama 3.1. See the
-# "Request Access" section of ../README.md.
-case $MODEL_SIZE in
-    8b) HF_REPO=meta-llama/Meta-Llama-3-8B ;;
-    70b) HF_REPO=meta-llama/Meta-Llama-3-70B ;;
-    405b) HF_REPO=meta-llama/Meta-Llama-3.1-405B ;;
-    *)
-        echo "error: unsupported MODEL_SIZE: $MODEL_SIZE" >&2
-        exit 1
-        ;;
-esac
+# The repo to prefetch comes from the recipe's declared downloads, matched on
+# the size token (e.g. "-30b" matches Qwen/Qwen3-30B-A3B), so this works for any
+# recipe instead of hardcoding one family's repo names.
+HF_REPO=$(
+    python3 -c '
+import sys, yaml
+meta = yaml.safe_load(open(sys.argv[1]))
+size = sys.argv[2].lower()
+repos = [d["repo_id"] for d in meta.get("downloads", {}).get("huggingface", [])]
+match = [r for r in repos if f"-{size}" in r.lower()]
+print(match[0] if match else (repos[0] if len(repos) == 1 else ""))
+' "$RECIPE_DIR/metadata.yaml" "$MODEL_SIZE"
+)
 HF_REPO=${HF_REPO_OVERRIDE:-$HF_REPO}
 
 export HF_HOME=${HF_HOME:-$LLMB_INSTALL/.cache/huggingface}
@@ -81,7 +95,7 @@ print(repo["url"], repo["commit"])
 PY
 )
 
-FW_VERSION=$(sed -n 's/^export FW_VERSION=\(.*\)$/\1/p' "$RECIPE_DIR/launch.sh")
+FW_VERSION=$(sed -n 's/^[[:space:]]*\(export[[:space:]]\+\)\?FW_VERSION=\(.*\)$/\2/p' "$RECIPE_DIR/launch.sh" | head -1)
 if [[ -z $FW_VERSION ]]; then
     echo "error: could not read FW_VERSION from $RECIPE_DIR/launch.sh" >&2
     exit 1
@@ -161,7 +175,12 @@ else
 fi
 
 echo
+# Prefer the recipe's own entry point if it has one, so the hint matches how
+# the user actually invoked this rather than naming the shared implementation.
+ENTRY_DIR=$SCRIPT_DIR
+[[ -x $RECIPE_DIR/single_node_docker/launch_local.sh ]] && ENTRY_DIR=$RECIPE_DIR/single_node_docker
+
 echo "Setup complete. Next:"
 echo "  export LLMB_INSTALL=$LLMB_INSTALL"
 echo "  export HF_TOKEN=\$(cat /path/to/hf-token)"
-echo "  cd $SCRIPT_DIR && JOB_TOTAL_GPUS=4 GPU_TYPE=vr200 MODEL_SIZE=8b ./launch_local.sh"
+echo "  cd $ENTRY_DIR && JOB_TOTAL_GPUS=<n> GPU_TYPE=<type> MODEL_SIZE=$MODEL_SIZE ./launch_local.sh"
