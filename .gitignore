@@ -44,3 +44,7 @@ nsys_analysis_build/
 CLAUDE.local.md
 GEMINI.md
 plans/
+
+# Local credential files (never commit)
+.ngc
+.hf
