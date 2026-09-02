@@ -135,7 +135,11 @@ def resolve_env(args, cfg) -> dict[str, str]:
     tp = cfg.tensor_model_parallel_size
     pp = cfg.pipeline_model_parallel_size
     cp = cfg.context_parallel_size
-    moe_backend = getattr(cfg, "moe_flex_dispatcher_backend", None)
+    # A preset can select a dispatcher the machine cannot use (HybridEP assumes
+    # an NVL72 domain, so it is wrong on a single node). When the caller
+    # overrides it, the env has to follow, or we would export MNNVL settings for
+    # a dispatcher that is not running.
+    moe_backend = args.moe_backend or getattr(cfg, "moe_flex_dispatcher_backend", None)
     moe_a2a_overlap = bool(getattr(cfg, "moe_a2a_overlap", False))
 
     # _set_num_cuda_device_max_connections
@@ -158,7 +162,9 @@ def resolve_env(args, cfg) -> dict[str, str]:
 
     # _set_nvl_domain_size (HybridEP only)
     if moe_backend == "hybridep":
-        ep = cfg.expert_model_parallel_size
+        # Effective EP, not the preset's: a caller overriding EP to fit the node
+        # must get matching NVL-domain settings.
+        ep = _effective(args, cfg, "expert_model_parallel_size")
         if gpu in ("h100", "b200", "b300"):
             env["NVLINK_DOMAIN_SIZE"] = "8"
             env["USE_MNNVL"] = "0"
@@ -344,6 +350,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--global_batch_size", type=int)
     parser.add_argument("--micro_batch_size", type=int)
     parser.add_argument("--nemo_home", default="")
+    parser.add_argument(
+        "--moe-backend",
+        default="",
+        help="Override the preset's MoE flex dispatcher for env purposes "
+        "(deepep/hybridep enable the NVL-domain settings; anything else, e.g. "
+        "alltoall, disables them).",
+    )
     parser.add_argument(
         "--hf-token-in-env",
         action="store_true",

@@ -50,13 +50,35 @@ fi
 set -eu -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-RECIPE_DIR=$(dirname "$SCRIPT_DIR")
+# Defaults to the recipe this script sits inside. Point it at another
+# megatron_bridge recipe to drive that one with the same tooling, e.g.
+#   RECIPE_DIR=../../../qwen3/pretrain MODEL_SIZE=30b ... ./launch_local.sh
+RECIPE_DIR=${RECIPE_DIR:-$(dirname "$SCRIPT_DIR")}
+RECIPE_DIR=$(cd -- "$RECIPE_DIR" && pwd)
 
-export WORKLOAD_TYPE=pretrain
-export MODEL_NAME=llama3.1
+for f in launch.sh metadata.yaml; do
+    [[ -f $RECIPE_DIR/$f ]] || {
+        echo "error: $RECIPE_DIR/$f not found; RECIPE_DIR must point at a recipe directory" >&2
+        exit 1
+    }
+done
+
+# Workload identity comes from the recipe's own metadata, so LLMB_WORKLOAD
+# matches what the Slurm path would use.
+read -r WORKLOAD_TYPE MODEL_NAME < <(
+    python3 - "$RECIPE_DIR/metadata.yaml" <<'PY'
+import sys, yaml
+g = yaml.safe_load(open(sys.argv[1]))["general"]
+print(g["workload_type"], g["workload"])
+PY
+)
+export WORKLOAD_TYPE MODEL_NAME
+: "${MODEL_NAME:?could not read general.workload from $RECIPE_DIR/metadata.yaml}"
 
 # Track the framework version the recipe pins rather than hardcoding it here.
-FW_VERSION=$(sed -n 's/^export FW_VERSION=\(.*\)$/\1/p' "$RECIPE_DIR/launch.sh")
+# Recipes are inconsistent about `export`, so accept both spellings.
+FW_VERSION=$(sed -n 's/^[[:space:]]*\(export[[:space:]]\+\)\?FW_VERSION=\(.*\)$/\2/p' \
+    "$RECIPE_DIR/launch.sh" | head -1)
 : "${FW_VERSION:?could not read FW_VERSION from $RECIPE_DIR/launch.sh}"
 
 export OPENBLAS_NUM_THREADS=1 # Required for login nodes with tight memory restrictions. Do not remove.
@@ -135,22 +157,38 @@ if ((JOB_TOTAL_GPUS > PHYSICAL_GPUS)); then
     exit 1
 fi
 
-# Set model family and recipe names based on model size (mirrors ../launch.sh)
-MODEL_FAMILY_NAME="llama"
-case $MODEL_SIZE in
-    405b) DEFAULT_MODEL_RECIPE_NAME="llama31_405b" ;;
-    70b) DEFAULT_MODEL_RECIPE_NAME="llama3_70b" ;;
-    8b) DEFAULT_MODEL_RECIPE_NAME="llama3_8b" ;;
-    *)
-        echo "Error: Unsupported MODEL_SIZE: $MODEL_SIZE" >&2
-        exit 1
-        ;;
+# Model family and recipe name, mirroring each recipe's own launch.sh. These
+# are the `configs.<family>` package and the `<recipe>_<task>_config_<gpu>`
+# builder inside it, so they have to match upstream's names exactly. Both are
+# overridable; MODEL_RECIPE_NAME in particular is the escape hatch when the
+# default config reads a HuggingFace repo you lack access to.
+case $MODEL_NAME in
+    llama2 | llama3 | llama3.1) DEFAULT_MODEL_FAMILY_NAME="llama" ;;
+    qwen3) DEFAULT_MODEL_FAMILY_NAME="qwen" ;;
+    deepseek_v3) DEFAULT_MODEL_FAMILY_NAME="deepseek" ;;
+    *) DEFAULT_MODEL_FAMILY_NAME="" ;;
 esac
-# Escape hatch for the Megatron-Bridge config to load. The 8B/70B defaults are
-# the llama3 recipes (see ../README.md), which read the separately gated Llama 3
-# repos; `MODEL_RECIPE_NAME=llama31_8b` selects the genuine Llama 3.1 8B recipe
-# instead, which reads meta-llama/Meta-Llama-3.1-8B.
+MODEL_FAMILY_NAME=${MODEL_FAMILY_NAME:-$DEFAULT_MODEL_FAMILY_NAME}
+
+case $MODEL_NAME:$MODEL_SIZE in
+    # llama3.1: 8B/70B intentionally reuse the llama3 configs (see ../README.md),
+    # which read the separately gated Llama 3 repos. MODEL_RECIPE_NAME=llama31_8b
+    # selects the genuine Llama 3.1 8B config, which reads Meta-Llama-3.1-8B.
+    llama3.1:405b) DEFAULT_MODEL_RECIPE_NAME="llama31_405b" ;;
+    llama3.1:70b) DEFAULT_MODEL_RECIPE_NAME="llama3_70b" ;;
+    llama3.1:8b) DEFAULT_MODEL_RECIPE_NAME="llama3_8b" ;;
+    qwen3:235b) DEFAULT_MODEL_RECIPE_NAME="qwen3_235b_a22b" ;;
+    qwen3:30b) DEFAULT_MODEL_RECIPE_NAME="qwen3_30b_a3b" ;;
+    *) DEFAULT_MODEL_RECIPE_NAME="" ;;
+esac
 MODEL_RECIPE_NAME=${MODEL_RECIPE_NAME:-$DEFAULT_MODEL_RECIPE_NAME}
+
+if [[ -z $MODEL_FAMILY_NAME ]] || [[ -z $MODEL_RECIPE_NAME ]]; then
+    echo "Error: no default mapping for workload '$MODEL_NAME' size '$MODEL_SIZE'." >&2
+    echo "       Set MODEL_FAMILY_NAME and MODEL_RECIPE_NAME explicitly; they must" >&2
+    echo "       match the names $RECIPE_DIR/launch.sh passes to setup_experiment.py." >&2
+    exit 1
+fi
 
 if [[ $DTYPE == "fp8" ]]; then
     # H100 supports only FP8 CS (mx not allowed)
@@ -220,6 +258,7 @@ RESOLVE_ARGS=(
 [[ -n ${EP:-} ]] && RESOLVE_ARGS+=(--expert_model_parallel_size "$EP")
 [[ -n ${MBS:-} ]] && RESOLVE_ARGS+=(--micro_batch_size "$MBS")
 [[ -n ${GBS:-} ]] && RESOLVE_ARGS+=(--global_batch_size "$GBS")
+[[ -n ${MOE_BACKEND:-} ]] && RESOLVE_ARGS+=(--moe-backend "$MOE_BACKEND")
 [[ -n ${HF_TOKEN:-} ]] && RESOLVE_ARGS+=(--hf-token-in-env)
 [[ $OFFLINE == true ]] && RESOLVE_ARGS+=(--offline)
 [[ $DETERMINISTIC == true ]] && RESOLVE_ARGS+=(--deterministic)
@@ -249,7 +288,9 @@ EXTRA_MOUNTS=()
 # Checkpoint load runs a single step on top of the restored state, so it has to
 # settle MAX_STEPS before the rank-local args are built.
 if [[ -n ${LOAD_CHECKPOINT_PATH:-} ]]; then
-    if [[ $MODEL_SIZE != 8b ]]; then
+    # Restriction is from the llama3.1 recipe; other workloads are not covered
+    # by it, so only enforce it there.
+    if [[ $MODEL_NAME == llama3.1 ]] && [[ $MODEL_SIZE != 8b ]]; then
         echo "Error: Checkpoint load is only supported for 8B. Current MODEL_SIZE=$MODEL_SIZE." >&2
         exit 1
     fi
@@ -292,7 +333,7 @@ RUN_ARGS=(
 
 # Checkpointing (8B only, mirroring ../launch.sh)
 if [[ $ENABLE_CHECKPOINT == true ]]; then
-    if [[ $MODEL_SIZE == 70b ]] || [[ $MODEL_SIZE == 405b ]]; then
+    if [[ $MODEL_NAME == llama3.1 ]] && { [[ $MODEL_SIZE == 70b ]] || [[ $MODEL_SIZE == 405b ]]; }; then
         echo "Error: Checkpointing is not supported for 70B or 405B due to a known NCCL error during checkpoint save." >&2
         exit 1
     fi
@@ -341,6 +382,28 @@ fi
 
 if [[ $DRYRUN == true ]]; then
     RUN_ARGS+=(--dryrun --save_config_filepath /nemo_run/configs/ConfigContainer.yaml)
+fi
+
+# MoE dispatcher override. A preset may pick HybridEP, which assumes an NVL72
+# domain and is therefore wrong on a single node; MOE_BACKEND=alltoall falls
+# back to the plain all-to-all dispatcher. Setting moe_flex_dispatcher_backend
+# to null as well matters: apply_flex_dispatcher_backend() leaves it on the
+# model config, and other code branches on it.
+if [[ -n ${MOE_BACKEND:-} ]]; then
+    case $MOE_BACKEND in
+        deepep | hybridep)
+            HYDRA_OVERRIDES+=(
+                "model.moe_token_dispatcher_type=flex"
+                "model.moe_flex_dispatcher_backend=$MOE_BACKEND"
+            )
+            ;;
+        *)
+            HYDRA_OVERRIDES+=(
+                "model.moe_token_dispatcher_type=$MOE_BACKEND"
+                "model.moe_flex_dispatcher_backend=null"
+            )
+            ;;
+    esac
 fi
 
 # Arbitrary extra Hydra overrides, e.g.

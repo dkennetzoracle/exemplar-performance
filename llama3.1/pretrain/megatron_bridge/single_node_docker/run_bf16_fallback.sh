@@ -38,7 +38,8 @@
 # Usage:
 #   export LLMB_INSTALL=/mnt/nvme/llmb
 #   export HF_TOKEN=$(cat /path/to/hf-token)
-#   ./run_bf16_fallback.sh
+#   ./run_bf16_fallback.sh                    # llama3.1 8B (default)
+#   WORKLOAD=qwen3-30b ./run_bf16_fallback.sh # Qwen3 30B-A3B (MoE)
 #
 # Any variable below can be overridden from the environment, and anything
 # launch_local.sh understands is passed straight through.
@@ -50,26 +51,52 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 : "${LLMB_INSTALL:?set LLMB_INSTALL to the install root, e.g. /mnt/nvme/llmb}"
 : "${HF_TOKEN:?set HF_TOKEN to a token with access to the model repo (see QUICKSTART.md)}"
 
+WORKLOAD=${WORKLOAD:-llama31-8b}
+
 # --- what to run ------------------------------------------------------------
-# llama31_8b rather than the recipe default llama3_8b: the llama3 presets read
-# meta-llama/Meta-Llama-3-8B, gated separately from Llama 3.1. Use llama3_8b
-# here instead if your token has Llama 3 access.
-export MODEL_SIZE=${MODEL_SIZE:-8b}
-export MODEL_RECIPE_NAME=${MODEL_RECIPE_NAME:-llama31_8b}
-# gb200 because llama31_8b ships no vr200 preset, and for 8B the vr200 presets
-# are defined as aliases of the gb200 ones anyway. GPU_TYPE only picks a
-# preset; it does not have to name the silicon.
-export GPU_TYPE=${GPU_TYPE:-gb200}
-# nvfp4 selects the *preset* (parallelism and batch sizing). The precision is
-# overridden to bf16 below, so the experiment name will say nvfp4 while the run
-# is bf16. llama31_8b has no bf16 preset to select instead.
-export DTYPE=${DTYPE:-nvfp4}
-export CONFIG_VARIANT=${CONFIG_VARIANT:-v1}
+if [[ $WORKLOAD == qwen3-30b ]]; then
+    # Qwen3 30B-A3B needs two fewer workarounds than llama: Qwen/Qwen3-30B-A3B
+    # is ungated, and 30b has a real bf16 preset, so no precision override.
+    export RECIPE_DIR=${RECIPE_DIR:-$SCRIPT_DIR/../../../../qwen3/pretrain}
+    export MODEL_SIZE=${MODEL_SIZE:-30b}
+    export DTYPE=${DTYPE:-bf16}
+    export GPU_TYPE=${GPU_TYPE:-vr200}
+    export CONFIG_VARIANT=${CONFIG_VARIANT:-v1}
+    export MBS=${MBS:-1}
+    # The preset is 8 GPUs with EP=8; EP cannot exceed the ranks available.
+    export EP=${EP:-4}
+    # The preset selects HybridEP, which assumes an NVL72 domain and is wrong on
+    # a single node. Note apply_flex_dispatcher_backend()'s guard is
+    # `major in [8,9,10]`, so on a major-10 part HybridEP does engage rather
+    # than being skipped -- it has to be turned off explicitly.
+    export MOE_BACKEND=${MOE_BACKEND:-alltoall}
+    # MoE routing and permutation are implemented directly in Triton, so they
+    # abort for the same reason as everything else Triton-compiled. These are
+    # extra call sites beyond the dense model's, not a different root cause.
+    MOE_OVERRIDES=" model.moe_permute_fusion=false model.moe_router_fusion=false"
+    # NOTE: do NOT add recompute here. qwen3's preset uses
+    # cuda_graph_impl=transformer_engine, and full recompute asserts
+    # "full recompute is only supported with full iteration CUDA graph".
+    # It is not needed anyway: EP shards the experts.
+else
+    export MODEL_SIZE=${MODEL_SIZE:-8b}
+    export MODEL_RECIPE_NAME=${MODEL_RECIPE_NAME:-llama31_8b}
+    # gb200 because llama31_8b ships no vr200 preset, and for 8B the vr200
+    # presets are aliases of the gb200 ones anyway. GPU_TYPE picks a preset; it
+    # does not have to name the silicon.
+    export GPU_TYPE=${GPU_TYPE:-gb200}
+    # nvfp4 selects the *preset* (parallelism and batch sizing); the precision
+    # is overridden to bf16 below, so the experiment name says nvfp4 while the
+    # run is bf16. llama31_8b has no bf16 preset to select instead.
+    export DTYPE=${DTYPE:-nvfp4}
+    export CONFIG_VARIANT=${CONFIG_VARIANT:-v1}
+    # MBS=1 because unfused attention materializes the full score matrix (WHY 4).
+    export MBS=${MBS:-1}
+    export GBS=${GBS:-8}
+    MOE_OVERRIDES=""
+fi
 export JOB_TOTAL_GPUS=${JOB_TOTAL_GPUS:-4}
 export MAX_STEPS=${MAX_STEPS:-50}
-# MBS=1 because unfused attention materializes the full score matrix; see WHY 4.
-export MBS=${MBS:-1}
-export GBS=${GBS:-8}
 
 # --- WHY each workaround is here -------------------------------------------
 # 1. bf16 only. TransformerEngine ships cubins for a fixed arch list and no
@@ -107,9 +134,14 @@ FALLBACK_OVERRIDES+=" mixed_precision.fp8_dot_product_attention=false"
 FALLBACK_OVERRIDES+=" model.fp8_dot_product_attention=false"
 FALLBACK_OVERRIDES+=" model.use_transformer_engine_op_fuser=false"
 FALLBACK_OVERRIDES+=" model.cross_entropy_loss_fusion=false"
-FALLBACK_OVERRIDES+=" model.recompute_granularity=full"
-FALLBACK_OVERRIDES+=" model.recompute_method=uniform"
-FALLBACK_OVERRIDES+=" model.recompute_num_layers=1"
+if [[ $WORKLOAD != qwen3-30b ]]; then
+    # Dense model: unfused attention materializes the score matrix, so MBS=1
+    # plus full recompute is what makes it fit.
+    FALLBACK_OVERRIDES+=" model.recompute_granularity=full"
+    FALLBACK_OVERRIDES+=" model.recompute_method=uniform"
+    FALLBACK_OVERRIDES+=" model.recompute_num_layers=1"
+fi
+FALLBACK_OVERRIDES+="$MOE_OVERRIDES"
 export EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES ${EXTRA_HYDRA_OVERRIDES:-}"
 
 cat <<'BANNER'

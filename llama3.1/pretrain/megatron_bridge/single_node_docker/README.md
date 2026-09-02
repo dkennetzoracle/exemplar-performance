@@ -87,6 +87,20 @@ MBS=1 GBS=8 MAX_STEPS=50 MODEL_RECIPE_NAME=llama31_8b GPU_TYPE=gb200 \
   DTYPE=nvfp4 CONFIG_VARIANT=v1 JOB_TOTAL_GPUS=4 MODEL_SIZE=8b ./launch_local.sh
 ```
 
+The same tooling drives the Qwen3 30B-A3B recipe (`WORKLOAD=qwen3-30b
+./run_bf16_fallback.sh`), also 50/50 iterations, loss falling 12.34 → 8.13:
+
+```
+ Averaging window:   iterations 35-44
+ Samples:            10
+ s/iter:             28.135 (std 0.340)
+ TFLOPS/GPU:         214.38 (std 2.58)
+```
+
+Qwen3 needs two *fewer* workarounds than llama — `Qwen/Qwen3-30B-A3B` is
+ungated, and 30b has a real bf16 preset — but adds three of its own; see
+[MoE workloads](#moe-workloads). Same caveat applies: not a benchmark result.
+
 > **That number is a bring-up baseline, not a benchmark result.** Six deviations
 > stack up, every one of them a slowdown: bf16 instead of nvfp4/fp8 (no kernels
 > exist for this arch), eager instead of fused activations, unfused instead of
@@ -187,6 +201,9 @@ The env-var interface matches `../launch.sh` (`JOB_TOTAL_GPUS`, `GPU_TYPE`,
 | `EXTRA_HYDRA_OVERRIDES` | extra Hydra overrides for `run_script.py` | n/a |
 | `COMPAT_SHIM` | `true` applies library-bug workarounds (see below) | n/a |
 | `CG_IMPL` / `CG_SCOPE` | override CUDA-graph mode (`CG_IMPL=none` disables) | preset only |
+| `RECIPE_DIR` | drive a *different* megatron_bridge recipe (see below) | n/a |
+| `MODEL_FAMILY_NAME` | `configs.<family>` package to load | derived |
+| `MOE_BACKEND` | MoE dispatcher override (`alltoall` disables HybridEP) | preset only |
 | `SBATCH_*`, `ADDITIONAL_SLURM_PARAMS`, `TIME_LIMIT` | ignored | required / used |
 
 Results land in the same layout the parent README documents, under
@@ -199,6 +216,56 @@ Slurm path applies.
 
 Start with `DRYRUN=true` on a new machine: it exercises the container, the
 mounts and the whole config resolution without touching a GPU.
+
+## Driving another recipe
+
+`RECIPE_DIR` points the launcher at any megatron_bridge recipe; workload
+identity comes from that recipe's own `metadata.yaml`, so `LLMB_WORKLOAD` and
+the `experiments/` layout match what its Slurm path would produce. One copy of
+the tooling therefore serves every recipe:
+
+```bash
+RECIPE_DIR=../../../../qwen3/pretrain MODEL_SIZE=30b DTYPE=bf16 \
+  GPU_TYPE=vr200 CONFIG_VARIANT=v1 JOB_TOTAL_GPUS=4 ./launch_local.sh
+```
+
+`MODEL_FAMILY_NAME` and the size→recipe mapping have defaults for the workloads
+listed in `launch_local.sh`; for anything else set both explicitly to whatever
+that recipe's `launch.sh` passes to `setup_experiment.py`.
+
+## MoE workloads
+
+Mixture-of-experts recipes need three things the dense ones do not.
+
+**Expert parallelism must fit the node.** Qwen3 30B-A3B's preset is 8 GPUs with
+`EP=8`; EP cannot exceed the ranks available, so on four GPUs it needs `EP=4`.
+The launcher's divisibility check catches the mismatch, but the value is yours
+to choose.
+
+**The dispatcher may assume a multi-node fabric.** The preset selects HybridEP,
+which is built for an NVL72 domain — `perf_env_local.py` would otherwise export
+`USE_MNNVL=1` and `NVLINK_DOMAIN_SIZE=72` on a single node. `MOE_BACKEND=alltoall`
+switches to the plain all-to-all dispatcher and keeps the emitted env consistent
+with it. Two details worth knowing:
+
+* `apply_flex_dispatcher_backend()`'s guard is `device_properties.major in
+  [8, 9, 10]`, so on a major-10 part HybridEP *does* engage rather than being
+  skipped for lack of support. It has to be turned off deliberately.
+* The override sets `moe_flex_dispatcher_backend=null` as well as the dispatcher
+  type, because `apply_flex_dispatcher_backend()` leaves that field on the model
+  config and other code branches on it.
+
+**MoE routing and permutation are Triton.** `moe_permute_fusion` and
+`moe_router_fusion` are additional direct-Triton call sites, so on an
+unsupported arch they abort exactly like TE's fused cross-entropy. These are
+extra *call sites*, not a new root cause — `TORCHDYNAMO_DISABLE=1` does not
+cover them because they are not `torch.compile`.
+
+Finally, do **not** copy the dense model's `recompute_granularity=full` into a
+qwen3 run: its preset uses `cuda_graph_impl=transformer_engine`, and full
+recompute asserts `full recompute is only supported with full iteration CUDA
+graph`. It is not needed either — expert parallelism shards the experts, and
+nothing OOMs at `MBS=1`.
 
 ## GPU_TYPE on Vera Rubin
 
@@ -453,14 +520,51 @@ with kernels for the arch. The launcher takes any image:
 RUN_CONF_IMAGE=<image> ./launch_local.sh
 ```
 
+### The family-target result (measured, not inferred)
+
+The GPU and driver are *not* the problem. `nvidia-container-toolkit` injects the
+driver's JIT (`libnvidia-ptxjitcompiler`, CUDA 13.4 here) into the container, and
+it handles this part correctly. Compiling one kernel that uses `__shfl_xor_sync`
+— the very `shfl.sync.bfly` intrinsic Triton fails to select — and checking the
+*result*, not just the absence of a crash:
+
+| build target | result on compute capability 10.7 |
+| --- | --- |
+| `sm_103a` (arch-exact — **what TE ships**) | `no kernel image is available for execution on the device` |
+| `sm_103f` (family) | correct result |
+| `sm_103` (plain) | correct result |
+| `sm_110f` | `no kernel image is available` — different family |
+| `compute_103` PTX, JIT-compiled by the driver | correct result |
+
+So `sm_103a` reproduces TE's exact runtime error, while a family or plain build
+of the identical source runs and computes the right answer. Check any candidate
+binary with `cuobjdump --list-elf`; if it shows only `a`-suffixed targets for
+your generation and `--list-ptx` shows none, it cannot run on a part it was not
+explicitly built for.
+
 Two concrete things to ask a vendor contact for, in preference order:
 
 1. A NeMo container built on a toolkit that defines `sm_107`.
 2. Failing that, a TransformerEngine built for the **family** target `sm_103f`
-   rather than arch-exact `sm_103a`. Per `ptxas --help`, a `sm_XYf` binary runs
-   on `sm_XZ` where `Z >= Y` in the same family, so `sm_103f` covers 10.7 —
-   and CUDA 13.3 can already emit it. That alone would unblock fp8/nvfp4
-   (Triton would still need `TORCHDYNAMO_DISABLE=1`).
+   rather than arch-exact `sm_103a` — measured above to run correctly here, and
+   CUDA 13.3 can already emit it. That alone would unblock fp8/nvfp4.
+
+Triton is a separate lever and cannot be fixed by choosing a target, because it
+hardcodes the arch-exact suffix:
+
+```python
+def sm_arch_from_capability(capability: int):
+    # TODO: Handle non-"a" sms          <-- upstream's own comment
+    suffix = "a" if capability >= 90 else ""
+    return f"sm_{capability}{suffix}"
+```
+
+`TRITON_OVERRIDE_ARCH` (pattern `^sm(\d+)$`) cannot express `sm_103f`, and
+monkeypatching that helper only redirects `ptxas --gpu-name` — the PTX `.target`
+directive is still emitted as `sm_107f` from below the Python layer, and `ptxas`
+rejects the mismatch. Until Triton grows family-target support,
+`TORCHDYNAMO_DISABLE=1` plus disabling the direct-Triton kernels is the only
+route.
 
 Everything above is still worth keeping as a diagnostic sequence: it tells you
 *which* layer is missing your arch, which is the fastest way to decide whether a

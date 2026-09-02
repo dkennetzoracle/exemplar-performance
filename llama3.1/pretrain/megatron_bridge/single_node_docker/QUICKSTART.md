@@ -246,6 +246,33 @@ MODEL_RECIPE_NAME=llama31_8b GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 \
 JOB_TOTAL_GPUS=4 MODEL_SIZE=8b ./launch_local.sh
 ```
 
+### 6c. Another recipe (Qwen3 30B-A3B)
+
+`RECIPE_DIR` points the same tooling at any megatron_bridge recipe. Qwen3 30B
+needs no HuggingFace gating (`Qwen/Qwen3-30B-A3B` is public) and has a native
+bf16 preset, but is MoE, so it needs expert parallelism sized to the node and
+the MoE-specific workarounds:
+
+```bash
+WORKLOAD=qwen3-30b ./run_bf16_fallback.sh
+```
+
+Expanded:
+
+```bash
+COMPAT_SHIM=true \
+EXTRA_ENV="TORCHDYNAMO_DISABLE=1 NVTE_FUSED_ATTN=0 NVTE_FLASH_ATTN=0 NVTE_UNFUSED_ATTN=1" \
+EXTRA_HYDRA_OVERRIDES="model.cross_entropy_loss_fusion=false \
+  model.moe_permute_fusion=false model.moe_router_fusion=false" \
+RECIPE_DIR=../../../../qwen3/pretrain \
+MODEL_SIZE=30b DTYPE=bf16 GPU_TYPE=vr200 CONFIG_VARIANT=v1 \
+EP=4 MBS=1 MOE_BACKEND=alltoall MAX_STEPS=50 JOB_TOTAL_GPUS=4 ./launch_local.sh
+```
+
+`EP=4` because the preset is 8 GPUs with `EP=8`; `MOE_BACKEND=alltoall` because
+the preset picks HybridEP, which assumes an NVL72 domain. Do not add
+`recompute_granularity=full` here — see [MoE workloads](README.md#moe-workloads).
+
 > **This is not a benchmark configuration.** bf16 instead of nvfp4/fp8, eager
 > instead of fused activations, unfused instead of cuDNN attention, `MBS=1`,
 > full activation recompute, and 4 GPUs against a validated minimum of 8. All
