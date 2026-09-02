@@ -26,15 +26,24 @@ orchestration around it is reimplemented:
 | `NsysPlugin` wrapping each task in `nsys profile` | `NSYS_ENABLE=1` in the rank wrapper |
 | `llmb-run jobs` (refreshes Slurm state) | [`parse_results_local.py`](parse_results_local.py) |
 
-Two extras, not ports of anything:
+**Start here for setup and the exact commands:**
+[`QUICKSTART.md`](QUICKSTART.md) — host prerequisites, proxy and image-store
+setup, credentials, install, launch, and a troubleshooting table keyed by error
+message.
+
+Three extras, not ports of anything:
 
 * [`check_arch_support.sh`](check_arch_support.sh) answers "can this container
   train on this GPU?" in about a minute, which is worth knowing before
   committing to a 50-step run on new silicon.
-* [`collect_arch_evidence.sh`](collect_arch_evidence.sh) writes the same
-  findings per image as Markdown with full, untruncated tracebacks — the
-  artifact to attach to a vendor ticket. Its output for this machine is checked
-  in as [`ARCH_SUPPORT_REPORT.md`](ARCH_SUPPORT_REPORT.md).
+* [`collect_arch_evidence.sh`](collect_arch_evidence.sh) writes one
+  self-contained Markdown file per image with full, untruncated tracebacks —
+  the artifact to attach to a vendor ticket. Output for this machine:
+  [`arch_support/nemo-26.06.01.md`](arch_support/nemo-26.06.01.md) and
+  [`arch_support/nemo-26.08.00.md`](arch_support/nemo-26.08.00.md).
+* [`run_bf16_fallback.sh`](run_bf16_fallback.sh) launches with every workaround
+  needed on a GPU whose arch the container has no kernels for, each annotated
+  with why. Bring-up only — not a benchmark configuration.
 
 `perf_env_local.py` reimplements the environment *rules* only. The *data* those
 rules branch on — parallelism, batch sizes, CUDA-graph mode, MoE backend, FSDP
