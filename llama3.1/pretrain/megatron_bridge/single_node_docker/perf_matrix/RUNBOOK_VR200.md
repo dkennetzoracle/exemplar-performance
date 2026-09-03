@@ -163,20 +163,32 @@ Five levers, all bf16, none needing a kernel the container might lack.
 > OOM without it, so the accurate form is **"MBS>1 requires recompute, and
 > recompute costs more than the higher MBS returns"**.
 
-| Lever | GB300 measurement | Hypothesis for VR200 |
+#### The original hypotheses, superseded — kept as the record
+
+> These were written **before** the sm_107 measurements above and are
+> preserved to show what was predicted and why it was wrong. **Do not follow
+> the guidance in this table** — the measured ordering is in the block above.
+> The GB300 column is still accurate; the VR200 column is the prediction.
+
+| Lever | GB300 measurement | Hypothesis for VR200 — *superseded* |
 | --- | --- | --- |
-| **Qwen3 MBS=1 -> 4** | **3.10x measured** (7,860 -> 15,042 -> 24,372 tok/s/GPU at MBS 1/2/4, bf16, same container, GBS fixed at 256) | **Run this first.** By far the largest portable win found — larger than every other lever combined, outside the missing-kernel gap itself. Pure batch shape, no kernel involved, so it should transfer directly. The VR200 reference is MBS=1, so this lever is completely untouched there. MBS=8 OOMs, so 4 is the ceiling at `EP=4` on one node. |
-| **Drop full recompute (llama)** | untested on either | Full recompute was added *because* unfused attention materialises the score matrix, and it costs ~30% extra compute. At MBS=1/seq 8192 that tensor is ~4 GiB on a ~280 GB GPU. If it is not needed, this is the largest remaining llama win. |
-| **llama MBS=2 / MBS=4** | MBS=2: 3.457 -> 3.410 s/iter (+1.4%) | QUICKSTART says MBS=1 is *required* because unfused attention OOMs at MBS=2. That **did not reproduce** on a 284 GB GB300 with the identical unfused-attention config. MBS=4 in the *fallback* path is untested — worth trying given MBS dominated everywhere else. |
+| ~~**Qwen3 MBS=1 -> 4**~~ **(WRONG — OOMs on sm_107)** | **3.10x measured** on a `nat-` row (7,860 -> 15,042 -> 24,372 tok/s/GPU at MBS 1/2/4, bf16, same container, GBS fixed at 256) | Predicted: "run this first, pure batch shape, no kernel involved, should transfer directly." **Wrong.** `nat-` rows run cuDNN fused attention; `por-` rows force `NVTE_UNFUSED_ATTN=1`, and unfused attention materialises the score matrix, so MBS is entangled with the missing kernel. Both Qwen3 MBS rows OOM on sm_107. |
+| **Drop full recompute (llama)** *(the actual winner)* | untested on GB300 | Predicted ~30%; **measured +40.7% alone, +43.8% stacked with GBS=64.** This was demoted below the MBS lever and should have been first. |
+| **llama MBS=2 / MBS=4** | MBS=2: 3.457 -> 3.410 s/iter (+1.4%) | Measured +1.8% / +3.4%, **but only with recompute on**; without recompute both OOM. So the accurate statement is *"MBS>1 requires recompute, and recompute costs more than the higher MBS returns"* — not that the QUICKSTART's MBS=1 requirement was wrong. |
 | **Larger GBS (32, 64)** | GA=1 -> 4 gave +4.0% on nvfp4 | Amortises the optimizer step and DP all-reduce over more microbatches. No arch dependency. Applies to llama (reference is GBS=8); Qwen3 is already GBS=256/GA=64, so GBS has little headroom there — for Qwen3 the lever is MBS, not GBS. |
 | **`nemo:26.08.00`** | bf16-fallback 3.457 -> 3.400 s/iter (+1.7%) | Free if it works, and bf16 is confirmed OK on sm_107 for that image. Compare with **`s/iter`, not TFLOPS** — see the accounting caveat in the README. |
 
-The Qwen3 MBS lever is the one that changed since this runbook was first
-written, and it kept growing as the sweep filled in. On GB300 at `EP=4`,
-with GBS fixed at 256 and only MBS varying:
+The Qwen3 MBS lever was the one that changed most as the GB300 sweep filled
+in, and it is also the one the sm_107 measurements refuted. Its GB300 scaling
+(7,860 -> 15,042 -> 24,372 tok/s/GPU at MBS 1/2/4, i.e. 3.10x) is real, but it
+belongs on the **unreachable** side of the ledger beside nvfp4 and fused
+attention: it depends on cuDNN fused attention, which sm_107 does not have.
 
-| MBS | tok/s/GPU | vs MBS=1 |
-| --- | --- | --- |
+The general lesson, which the row sets were built to enforce and this case
+proves: **a `nat-` measurement cannot predict a `por-` result.** Only `por-`
+rows are portable evidence.
+
+--- | --- | --- |
 | 1 (the reference) | 7,860 | — |
 | 2 | 15,042 | 1.91x |
 | 4 | **24,372** | **3.10x** |

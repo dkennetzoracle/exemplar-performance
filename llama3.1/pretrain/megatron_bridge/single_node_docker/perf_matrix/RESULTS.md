@@ -65,10 +65,17 @@ only post-training eval, not the timed iterations.
 
 ## 2. Best achievable per machine
 
-| Workload | VR200 best | GB300 best | GB300 advantage |
-| --- | --- | --- | --- |
-| llama3.1 8B | 6,543 tok/s/GPU (bf16 — its ceiling) | **59,389** tok/s/GPU (nvfp4, 26.08.00, MBS=4 GBS=256) | **9.08x** |
-| Qwen3 30B-A3B | 9,317 tok/s/GPU (bf16 — its ceiling) | **24,372** tok/s/GPU (bf16, 26.06.01, MBS=4 GBS=256) | **2.62x** |
+| Workload | VR200 reference | VR200 **tuned** best | GB300 best | vs VR200 tuned |
+| --- | --- | --- | --- | --- |
+| llama3.1 8B | 6,543 tok/s/GPU | **9,405** (bf16, no recompute, GBS=64) | **59,389** (nvfp4, 26.08.00, MBS=4 GBS=256) | **6.31x** |
+| Qwen3 30B-A3B | 9,317 tok/s/GPU | 9,317 (no portable lever ran — MBS OOMs) | **24,372** (bf16, 26.06.01, MBS=4 GBS=256) | **2.62x** |
+
+**Quote the tuned column, not the reference column.** Measuring GB300's best
+against VR200's *reference* gives llama3.1 8B 9.08x, but that compares a tuned
+config to an untuned one. VR200's own portable sweep lifts it to 9,405
+tok/s/GPU by dropping full recompute (+43.8%), which brings the honest dense
+advantage down to **6.31x**. Qwen3 is unchanged at 2.62x because none of the
+portable levers ran on sm_107 — its MBS rows OOM under unfused attention.
 
 The two workloads behave completely differently, and the dense-model headline
 does **not** generalise. Anyone extrapolating 9x to a mixture-of-experts
@@ -232,14 +239,17 @@ Worth recording because they are what make the comparisons above defensible.
 
 The GB300 side is **complete**: both workloads swept to their ceilings, with
 MBS, GBS/GA, precision, config variant and container all covered, and every
-failure attributed. Remaining work is on the VR200 side.
+failure attributed.
 
-- On VR200, the arch gate and the `reference` row set are **done and
-  reproduced** (see section 1). `native` and `portable` were still running as
-  of the last sync. `portable` is the one that matters: the top lever is
-  Qwen3 MBS=1 -> 4, measured at **3.10x** on GB300 and pure batch shape, so it
-  should transfer. If it does, VR200's Qwen3 ceiling moves from 9,317 to
-  roughly 29,000 tok/s/GPU — ahead of GB300's best MoE number. See
-  [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md).
-- The recompute question in `portable` is still open on both machines and is
-  the largest untested llama lever.
+On the VR200 side the arch gate, `reference` and `portable` are done (see
+section 1 and [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md)). What remains:
+
+- **VR200 `native`** — expected to fail on every quantized row; worth running
+  once per image purely to bank the per-config evidence for the ticket.
+- **VR200 `portable` on `nemo:26.08.00`** — the container lever is the one
+  portable item still unmeasured on sm_107 (predicted +1.7%).
+- **GB300 with recompute dropped.** The sm_107 sweep found this worth +40.7%
+  there, and it was never tested on GB300 because the native path made it
+  irrelevant. It only matters for the fallback-path rows, so it would not move
+  GB300's ceiling — but it would make the fallback comparison in section 1
+  a tuned-vs-tuned one rather than tuned-vs-untuned.
