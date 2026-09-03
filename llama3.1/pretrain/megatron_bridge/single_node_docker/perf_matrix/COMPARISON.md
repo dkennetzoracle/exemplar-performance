@@ -30,7 +30,7 @@ seq_len 8192 · TP=1 PP=1 CP=1 · DP=4 · 4 GPUs
 | 26.06.01 | bf16 (fallback, recompute) | 2 | 8 | 3.410 | 247.32 | 4,805 | 2.460 | 342.88 | 6,660 | +38.6% |
 | 26.06.01 | bf16 (fallback, recompute) | 4 | 16 | — | — | — | 4.843 | 348.27 | 6,766 | — |
 | 26.06.01 | bf16 (fallback, no recompute) | 1 | 8 | 2.417 | 348.94 | 6,779 | 1.779 | 473.99 | 9,210 | +35.9% |
-| 26.06.01 | bf16 (fallback, no recompute) | 1 | 32 | — | — | — | 6.989 | 482.68 | 9,377 | — |
+| 26.06.01 | bf16 (fallback, no recompute) | 1 | 32 | 9.516 | 354.44 | 6,887 | 6.989 | 482.68 | 9,377 | +36.2% |
 | 26.06.01 | bf16 (fallback, no recompute) | 1 | 64 | 18.980 | 355.43 | 6,906 | 13.936 | 484.08 | 9,405 | +36.2% |
 | 26.06.01 | bf16 (fallback, no recompute) | 2 | 8 | *oom_dense* |  |  | *oom_dense* |  |  | — |
 | 26.06.01 | bf16 (fallback, no recompute) | 4 | 16 | — | — | — | *oom_dense* |  |  | — |

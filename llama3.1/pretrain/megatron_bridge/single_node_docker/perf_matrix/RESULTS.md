@@ -49,6 +49,35 @@ Both measurements are stable (std 0.001 and 0.143 s/iter) and Qwen3's loss curve
 on GB300 matched the VR200 reference to four significant figures
 (12.34591 → 8.138762 vs the recorded 12.34 → 8.13), confirming identical config.
 
+### Tuned on both sides — the comparison does not hinge on the config
+
+The rows above carry full recompute, which both machines turn out not to need
+at MBS=1. Re-running the dense fallback with recompute off on **both** gives:
+
+| llama3.1 8B, 26.06.01, bf16 fallback | GB300 | VR200 | VR200 advantage |
+| --- | --- | --- | --- |
+| MBS=1 GBS=8, recompute | 4,739 | 6,543 | +38.1% |
+| MBS=1 GBS=64, recompute | 4,790 | 6,639 | +38.6% |
+| MBS=1 GBS=8, **no** recompute | 6,779 | 9,210 | +35.9% |
+| MBS=1 GBS=32, **no** recompute | 6,887 | 9,377 | +36.2% |
+| MBS=1 GBS=64, **no** recompute | **6,906** | **9,405** | **+36.2%** |
+| MBS=2 GBS=8, **no** recompute | *OOM* | *OOM* | — |
+
+VR200's lead sits between **+35.9% and +38.6% across every cell**, so the
+apples-to-apples conclusion is a property of the hardware rather than of a
+chosen config. Decomposed, the two machines agree on both levers and they
+stack almost additively: dropping recompute is worth +43.0%/+44.2% on GB300
+and +40.7%/+41.6% on VR200 (at GBS=8/64), while GBS 8→64 is worth only
++1.1–1.9% and +1.5–2.1%.
+
+**Full recompute is never needed at MBS=1, on either architecture**, and it
+costs ~41–44%. `run_bf16_fallback.sh` and the QUICKSTART prescribe
+"MBS=1 plus full recompute" as a single unit; MBS=1 alone is sufficient.
+MBS=2 without recompute OOMs on both (GB300 tried to allocate 8.00 GiB with
+662 MiB free — exactly the score matrix WHY 4 predicts), so the accurate rule
+is *MBS>1 requires recompute, and recompute costs more than the higher MBS
+returns*.
+
 ### VR200 re-measured on current tooling (2026-09-03)
 
 The VR200 column above was carried over from the original bring-up. Re-running
@@ -241,20 +270,17 @@ Worth recording because they are what make the comparisons above defensible.
 
 ## Pending
 
-The GB300 side is **complete**: both workloads swept to their ceilings, with
-MBS, GBS/GA, precision, config variant and container all covered, and every
-failure attributed.
+The GB300 dense and MoE sweeps are done, including the recompute rows the
+sm_107 result called out on this side. See [`COMPARISON.md`](COMPARISON.md)
+for the raw side-by-side.
 
-On the VR200 side the arch gate, `reference` and `portable` are done (see
-section 1 and [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md)). What remains:
+Genuinely outstanding:
 
-- **VR200 `native`** — expected to fail on every quantized row; worth running
-  once per image purely to bank the per-config evidence for the ticket.
-- **VR200 `portable` on `nemo:26.08.00`** — the container lever is the one
-  portable item still unmeasured on sm_107 (predicted +1.7%).
-GB300's fallback rows with recompute dropped are in progress on that side,
-which will make section 1's comparison tuned-vs-tuned rather than
-tuned-vs-untuned.
-
-Every issue hit while running the matrix — with owner, and whether it needs a
-container rebuild — is catalogued in [`ISSUES.md`](ISSUES.md).
+- **Qwen3 fp8 at MBS=1 and MBS=4 on `nemo:26.08.00`.** Both were lost to the
+  mid-session node failure, not measured and not diagnosed. Low value —
+  fp8 costs this MoE a flat 37% on 26.06.01, so these would confirm a config
+  already known to be worse than bf16.
+- **VR200 `native`** — expected to fail on every quantized row; worth one pass
+  per image purely to bank per-config evidence for the TE ticket.
+- **VR200 `portable` on `nemo:26.08.00`** — the only portable lever still
+  unmeasured on sm_107 (predicted +1.7%).
