@@ -112,6 +112,31 @@ def plan_val(plan: str, key: str) -> str:
     return m.group(1) if m else ""
 
 
+def detect_fallback(txt: str, tag: str) -> bool:
+    """Was this row the bf16 fallback, i.e. run with the arch workarounds?
+
+    Not decidable from the tag: run_matrix.sh emits "...-bf16-..." while the
+    earlier ad-hoc GB300 rows used "...bf16fallback". Nor from `precision`,
+    which reports the *preset* -- llama31_8b has no bf16 preset, so a fallback
+    run selects nvfp4 and overrides the precision, and the row reads "nvfp4"
+    on a bf16 run.
+
+    The mechanism itself is recorded: the launcher writes the resolved
+    container environment to env.list in the run directory, and the fallback
+    is exactly the config that forces the unfused attention backend. Read that
+    when it is reachable, and fall back to the tag string when it is not (the
+    GB300 rows were measured on another machine, so their run dirs are gone).
+    """
+    run_dir = field(txt, "Run dir:")
+    if run_dir:
+        try:
+            with open(os.path.join(run_dir, "env.list")) as fh:
+                return "NVTE_UNFUSED_ATTN=1" in fh.read()
+        except OSError:
+            pass
+    return "fallback" in tag
+
+
 def workload_of(exp: str, tag: str) -> str:
     return "qwen3-30b-a3b" if ("qwen3" in exp or "qwen3" in tag) else "llama3.1-8b"
 
@@ -135,6 +160,7 @@ def parse_log(path: str) -> dict | None:
     seq_len = int(m.group(1)) if m else None
 
     wl = workload_of(exp, tag)
+    is_fallback = detect_fallback(txt, tag)
     gbs = plan_val(plan, "GBS")
     gpus = re.search(r"GPUs:\s+(\d+)", txt)
     gpus = int(gpus.group(1)) if gpus else 4
@@ -187,7 +213,7 @@ def parse_log(path: str) -> dict | None:
         tflops_per_gpu=f"{tflops:.2f}" if tflops else "",
         tflops_std=f"{t_std:.2f}" if t_std is not None else "",
         tokens_s_per_gpu=f"{tok_s_gpu:.0f}" if tok_s_gpu else "",
-        failure_code=code, note=note, experiment=exp,
+        failure_code=code, note=note, experiment=exp, is_fallback=is_fallback,
     )
 
 
@@ -207,7 +233,7 @@ def compare_to_vr200(row: dict, base_tokens: float | None) -> dict:
     # run is bf16. So the fallback test must come FIRST; checking `quantized`
     # first mislabels every llama fallback row as unrunnable on VR200, which
     # is exactly the config VR200 does run as its reference.
-    is_fallback = "fallback" in row["tag"]
+    is_fallback = row["is_fallback"]
     quantized = (not is_fallback) and row["precision"].startswith(("fp8", "nvfp4"))
     moe = row["workload"] == "qwen3-30b-a3b"
 
@@ -265,7 +291,7 @@ def vr_row(wl: str) -> dict:
         s_iter=f"{r['s_iter']:.3f}", s_iter_std="",
         tflops_per_gpu=f"{r['tflops']:.2f}", tflops_std="",
         tokens_s_per_gpu=f"{r['gbs'] * r['seq_len'] / r['s_iter'] / 4:.0f}",
-        failure_code="", experiment="",
+        failure_code="", experiment="", is_fallback=True,
         note="bf16 fallback = this machine's ceiling: TE has no sm_107a cubin and no PTX",
     )
 

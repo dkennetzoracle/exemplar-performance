@@ -228,6 +228,18 @@ run_portable () {
             ./launch_local.sh
     done
 
+    # The two llama levers combined. Recompute was only varied at GBS=8 and GBS
+    # only with recompute ON, so the setting that actually wins on sm_107
+    # (MBS=1, no recompute: +40.7%) had never been combined with the GBS lever.
+    # Without these rows the matrix cannot say whether the gains stack. On
+    # VR200 they do, and this is where its measured ceiling comes from.
+    for gbs in 32 64; do
+        run por-$T-llama31-8b-bf16-mbs1-norecompute-gbs$gbs $COMMON $L8 \
+            GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=1 GBS=$gbs \
+            EXTRA_ENV="$FALLBACK_ENV" \
+            EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $RECOMPUTE_OFF $EVAL_OVR" \
+            ./launch_local.sh
+    done
 }
 
 case $MODE in

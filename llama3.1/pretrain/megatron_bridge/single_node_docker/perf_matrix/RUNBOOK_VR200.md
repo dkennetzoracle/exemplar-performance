@@ -111,6 +111,58 @@ IMAGE_TAG=26.08.00 ./run_matrix.sh portable
 Five levers, all bf16, none needing a kernel the container might lack.
 **Ordered by measured or expected size — run them top-down if time is short.**
 
+> ### MEASURED on 4 x sm_107, `nemo:26.06.01` (2026-09-03)
+>
+> **The predicted ordering was wrong, and instructively so.** The lever
+> promoted to the top cannot run here at all; the one demoted below it is the
+> only large win. The hypothesis table below is left as written, with the
+> measured outcome beside it.
+>
+> | Lever | predicted for VR200 | **VR200 measured** |
+> | --- | --- | --- |
+> | Qwen3 MBS=1 -> 4 | 3.10x, "should transfer directly" | **OOM at MBS=2 and MBS=4** |
+> | Drop full recompute (llama) | untested, maybe ~30% | **+40.7%** (6,543 -> 9,210 tok/s/GPU) |
+> | llama MBS=2 / MBS=4 | +1.4% | +1.8% / +3.4%, **but only with recompute**; without it both OOM |
+> | Larger GBS (32, 64) | +4.0% | +1.3% / +1.5% alone; **stacks** with no-recompute to **+43.8%** |
+> | `nemo:26.08.00` | +1.7% | pending |
+>
+> **Full ranking (llama3.1 8B, `nemo:26.06.01`):**
+>
+> | Config | s/iter | tok/s/GPU | vs reference |
+> | --- | --- | --- | --- |
+> | MBS=1, no recompute, GBS=64 | 13.936 | **9,405** | **1.44x** |
+> | MBS=1, no recompute, GBS=32 | 6.989 | 9,377 | 1.43x |
+> | MBS=1, no recompute, GBS=8 | 1.779 | 9,210 | 1.41x |
+> | MBS=4, recompute, GBS=16 | 4.843 | 6,766 | 1.03x |
+> | MBS=2, recompute, GBS=8 | 2.460 | 6,660 | 1.02x |
+> | MBS=1, recompute, GBS=64 | 19.743 | 6,639 | 1.01x |
+> | MBS=1, recompute, GBS=32 | 9.891 | 6,626 | 1.01x |
+> | MBS=1, recompute, GBS=8 *(reference)* | 2.504 | 6,543 | 1.00x |
+> | MBS=2 / MBS=4, no recompute | — | — | OOM |
+> | Qwen3 MBS=2 / MBS=4 | — | — | OOM |
+>
+> **Why the MBS prediction failed — and the lesson for this matrix.** The
+> 3.10x Qwen3 number is a `nat-` row, and `nat-` rows carry no `FALLBACK_ENV`,
+> so they run cuDNN **fused** attention. `por-` rows force
+> `NVTE_UNFUSED_ATTN=1`. Unfused attention materialises the score matrix, which
+> scales with MBS — so in the fallback path MBS is *not* "pure batch shape with
+> no kernel involved". It is entangled with the one kernel sm_107 does not
+> have. Both VR200 Qwen3 MBS rows OOM (`tried 4.64 GiB, 4.61 GiB free of
+> 278.56 GiB`; peak reserved 231.8 GB), confirmed against the run's own
+> `env.list`.
+>
+> **A GB300 `nat-` measurement therefore cannot predict a VR200 `por-`
+> result.** Only `por-` rows are portable evidence — which is what the row sets
+> exist for, and this is the case that proves it. The 3.10x belongs on the
+> *unreachable* side of the ledger, beside nvfp4 and fused attention.
+>
+> **What pays on sm_107 is the demoted lever.** Recompute was originally added
+> at the same time as MBS=1 while debugging an OOM and the two were never
+> separated; MBS=1 alone was sufficient. Restate rather than delete the MBS=1
+> claim, though: MBS=2 and MBS=4 *do* run with recompute (+1.8% / +3.4%) and
+> OOM without it, so the accurate form is **"MBS>1 requires recompute, and
+> recompute costs more than the higher MBS returns"**.
+
 | Lever | GB300 measurement | Hypothesis for VR200 |
 | --- | --- | --- |
 | **Qwen3 MBS=1 -> 4** | **3.10x measured** (7,860 -> 15,042 -> 24,372 tok/s/GPU at MBS 1/2/4, bf16, same container, GBS fixed at 256) | **Run this first.** By far the largest portable win found — larger than every other lever combined, outside the missing-kernel gap itself. Pure batch shape, no kernel involved, so it should transfer directly. The VR200 reference is MBS=1, so this lever is completely untouched there. MBS=8 OOMs, so 4 is the ceiling at `EP=4` on one node. |
