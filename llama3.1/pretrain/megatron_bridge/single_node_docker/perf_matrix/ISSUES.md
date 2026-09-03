@@ -234,7 +234,7 @@ portable evidence, which is what the row sets exist for.
 ## What this means for planning
 
 - **bf16 works today and is tunable.** VR200's ceiling moved from 6,543 to
-  9,405 tok/s/GPU (1.44×) with no container change, purely by dropping
+  9,635 tok/s/GPU (1.47×) with no container change for the arch, by dropping
   recompute and raising GBS. Nothing here is blocked on waiting.
 - **The quantized path is blocked on A1–A3, and only those.** Everything in B
   is a preset or logic bug with a one-line workaround.
