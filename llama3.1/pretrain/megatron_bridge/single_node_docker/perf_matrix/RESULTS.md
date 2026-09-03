@@ -1,5 +1,9 @@
 # Measured results: GB300 (sm_103) vs Vera Rubin (sm_107)
 
+> **Just want the numbers?** [`COMPARISON.md`](COMPARISON.md) is the raw
+> side-by-side: one row per config, both machines in adjacent columns, with a
+> percent-difference column. This file is the narrative around them.
+
 All rows: **4 GPUs, one node, 50 steps, mock data**, Megatron-Bridge
 `b50da4c7404caa41793e74ac40d18798844c7b67`.
 
