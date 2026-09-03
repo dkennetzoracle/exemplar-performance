@@ -45,6 +45,22 @@ Both measurements are stable (std 0.001 and 0.143 s/iter) and Qwen3's loss curve
 on GB300 matched the VR200 reference to four significant figures
 (12.34591 → 8.138762 vs the recorded 12.34 → 8.13), confirming identical config.
 
+### VR200 re-measured on current tooling (2026-09-03)
+
+The VR200 column above was carried over from the original bring-up. Re-running
+the same two rows on a 4 × sm_107 node with `run_matrix.sh reference`
+reproduces it, so the cross-machine comparison rests on a repeatable baseline
+rather than a single historical run:
+
+| Workload | original | re-measured | delta |
+| --- | --- | --- | --- |
+| llama3.1 8B | 2.504 s/iter · 336.82 TFLOPS · 6,543 tok/s/GPU | 2.504 s/iter · 336.81 TFLOPS · **6,543** | exact |
+| Qwen3 30B-A3B | 28.135 s/iter · 214.38 TFLOPS · 9,317 tok/s/GPU | 28.189 s/iter · 213.98 TFLOPS · **9,300** | −0.2% |
+
+Qwen3 loss 12.34119 → 8.136611. The 0.2% is inside that row's own run-to-run
+spread (`s/iter` std 0.148) — these rows set `train.eval_iters=0`, which touches
+only post-training eval, not the timed iterations.
+
 ---
 
 ## 2. Best achievable per machine

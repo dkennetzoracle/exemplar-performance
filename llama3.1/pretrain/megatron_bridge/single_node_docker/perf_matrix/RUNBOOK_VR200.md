@@ -7,8 +7,12 @@ Vera Rubin node to (a) re-confirm the VR200 reference on current tooling and
 a machine that is stuck on the bf16 fallback.
 
 The GB300 cluster used for the first half was 1,482 nodes of `gpu:B300:4` with
-no VR200 in it, so nothing below has been verified on sm_107 — everything is a
-hypothesis with a measured GB300 counterpart to compare against.
+no VR200 in it, so nothing below had been verified on sm_107 when it was
+written — everything was a hypothesis with a measured GB300 counterpart.
+
+> **Execution status on a 4 × sm_107 node (2026-09-03).** Section 0 and step 1
+> are **done and reproduced**; results are folded into `RESULTS.md`. Steps 2
+> and 3 are in progress. Per-step outcomes are recorded inline below.
 
 ---
 
@@ -40,6 +44,12 @@ fixed it, the whole plan changes:
 ./check_arch_support.sh nvcr.io/nvidia/nemo:26.08.00
 ```
 
+**Result (2026-09-03, 4 × sm_107, driver 615.62): unchanged on both images.**
+`ptxas` still has no `sm_107a`; TE cubins still
+`sm_100 sm_100a sm_103a sm_120 sm_75 sm_80 sm_89 sm_90 sm_90a` with
+`te_ptx_entries=0`; bf16 OK, fp8_cs / fp8_mx / nvfp4 / `torch.compile` all
+FAIL. Nothing a newer container fixed, so the plan below stands as written.
+
 ---
 
 ## Run order
@@ -66,6 +76,18 @@ find out why before trusting anything else:
 
 Qwen3's loss should fall 12.34 → 8.13 over the 50 steps; on GB300 it matched to
 four significant figures, so it is a good same-config check.
+
+**Result: both reproduced.**
+
+| Workload | recorded tok/s/GPU | re-measured | delta |
+| --- | --- | --- | --- |
+| llama3.1 8B | 6,543 | **6,543** (2.504 s/iter, 336.81 TFLOPS) | exact |
+| Qwen3 30B-A3B | 9,317 | **9,300** (28.189 s/iter, 213.98 TFLOPS) | −0.2% |
+
+Qwen3 loss 12.34119 → 8.136611, matching the recorded 12.34 → 8.13. The 0.2%
+on Qwen3 is run-to-run noise (`s/iter` std 0.148 on that row, i.e. ±0.5%), not
+a regression: these rows carry `train.eval_iters=0`, which changes only the
+post-training eval, not the timed iterations.
 
 ### 2. Native — capture the failure as evidence, once
 

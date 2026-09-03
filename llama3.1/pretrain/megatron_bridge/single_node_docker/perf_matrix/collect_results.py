@@ -209,9 +209,13 @@ def vr_row(wl: str) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("results_dir", nargs="?",
-                    default=os.environ.get("RESULTS_DIR",
-                                           "/mnt/localdisk/llmb/perf-matrix-results"))
+    # Same precedence as lib.sh: RESULTS_DIR, else $LLMB_INSTALL/perf-matrix-results.
+    # Deriving from LLMB_INSTALL matters because the runbook tells you to run
+    # this as a bare `./collect_results.py`, and the install root is node-local
+    # (/mnt/localdisk on the GB300 cluster, /mnt/nvme here).
+    default_results = os.environ.get("RESULTS_DIR") or os.path.join(
+        os.environ.get("LLMB_INSTALL", "/mnt/localdisk/llmb"), "perf-matrix-results")
+    ap.add_argument("results_dir", nargs="?", default=default_results)
     ap.add_argument("-o", "--out", default=None)
     args = ap.parse_args()
 
