@@ -4,11 +4,14 @@ vr-260601-llama3.1-8b-norecompute-mbs1-gbs64,llama3.1-8b,26.06.01,nvfp4,v1,1,64,
 vr-260601-llama3.1-8b-norecompute-mbs1-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,1,8,1.779,473.99,9210,,True
 vr-260601-llama3.1-8b-norecompute-mbs2-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,2,8,,,,oom_dense,True
 vr-260601-llama3.1-8b-norecompute-mbs4-gbs16,llama3.1-8b,26.06.01,nvfp4,v1,4,16,,,,oom_dense,True
+vr-260601-llama3.1-8b-nvfp4-mbs2-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,2,8,,,,ptxas_no_target,False
 vr-260601-llama3.1-8b-recompute-mbs1-gbs32,llama3.1-8b,26.06.01,nvfp4,v1,1,32,9.891,341.02,6626,,True
 vr-260601-llama3.1-8b-recompute-mbs1-gbs64,llama3.1-8b,26.06.01,nvfp4,v1,1,64,19.743,341.70,6639,,True
 vr-260601-llama3.1-8b-recompute-mbs1-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,1,8,2.504,336.81,6543,,True
 vr-260601-llama3.1-8b-recompute-mbs2-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,2,8,2.460,342.88,6660,,True
 vr-260601-llama3.1-8b-recompute-mbs4-gbs16,llama3.1-8b,26.06.01,nvfp4,v1,4,16,4.843,348.27,6766,,True
+vr-260800-llama3.1-8b-norecompute-mbs1-gbs32,llama3.1-8b,26.08.00,nvfp4,v1,1,32,6.826,471.45,9601,,True
+vr-260800-llama3.1-8b-norecompute-mbs1-gbs64,llama3.1-8b,26.08.00,nvfp4,v1,1,64,13.604,473.13,9635,,True
 vr-260800-llama3.1-8b-norecompute-mbs1-gbs8,llama3.1-8b,26.08.00,nvfp4,v1,1,8,1.731,464.84,9465,,True
 vr-260800-llama3.1-8b-norecompute-mbs2-gbs8,llama3.1-8b,26.08.00,nvfp4,v1,2,8,,,,oom_dense,True
 vr-260800-llama3.1-8b-norecompute-mbs4-gbs16,llama3.1-8b,26.08.00,nvfp4,v1,4,16,,,,oom_dense,True
