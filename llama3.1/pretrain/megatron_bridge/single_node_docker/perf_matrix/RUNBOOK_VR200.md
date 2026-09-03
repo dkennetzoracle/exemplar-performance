@@ -228,6 +228,12 @@ hardware.
 
 ---
 
+## Filing
+
+> **The full catalogue is [`ISSUES.md`](ISSUES.md)** — twelve items with owners,
+> of which only three (TE cubins, `ptxas` target, cuDNN attention plans)
+> require a rebuilt container. The four below are the NVIDIA-facing subset.
+
 ## Filing: four independent items
 
 Keep these separate; different teams own them.

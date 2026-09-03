@@ -174,6 +174,7 @@ in place (must run on the node that holds the run directories).
 | `backfill_metrics.sh` | re-parse finished runs missing metrics |
 | `RUNBOOK_VR200.md` | note-to-self for reproducing this on a Vera Rubin (sm_107) node |
 | `RESULTS.md` | measured numbers, with the config each came from |
+| `ISSUES.md` | every issue the matrix surfaced, with owner and whether a rebuilt container is required |
 
 The workaround strings in `lib.sh` are deliberately spelled out rather than
 delegated to `run_bf16_fallback.sh`, so that individual workarounds can be

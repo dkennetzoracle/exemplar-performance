@@ -248,8 +248,9 @@ section 1 and [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md)). What remains:
   once per image purely to bank the per-config evidence for the ticket.
 - **VR200 `portable` on `nemo:26.08.00`** — the container lever is the one
   portable item still unmeasured on sm_107 (predicted +1.7%).
-- **GB300 with recompute dropped.** The sm_107 sweep found this worth +40.7%
-  there, and it was never tested on GB300 because the native path made it
-  irrelevant. It only matters for the fallback-path rows, so it would not move
-  GB300's ceiling — but it would make the fallback comparison in section 1
-  a tuned-vs-tuned one rather than tuned-vs-untuned.
+GB300's fallback rows with recompute dropped are in progress on that side,
+which will make section 1's comparison tuned-vs-tuned rather than
+tuned-vs-untuned.
+
+Every issue hit while running the matrix — with owner, and whether it needs a
+container rebuild — is catalogued in [`ISSUES.md`](ISSUES.md).
