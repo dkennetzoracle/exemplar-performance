@@ -37,6 +37,35 @@ the price of the missing kernels, and nothing about it is a hardware property.
 
 ---
 
+## Charts
+
+![llama3.1 8B](plots/llama31_8b.png)
+
+![Qwen3 30B-A3B](plots/qwen3_30b_a3b.png)
+
+One figure per workload, panelled by container so the bar labels need no
+container token. Bars are `tok/s/GPU`; a bar that is absent carries the
+attributed failure cause in its place, so "no bar" never reads as "no data".
+
+Config shorthand is `<precision>_<path>_<MBS>_<GBS>` — so `bf16_fbre_1_8` is
+bf16 via the fallback with recompute on, MBS=1, GBS=8:
+
+| code | path |
+| --- | --- |
+| `fbre` | bf16 fallback, full activation recompute |
+| `fbnr` | bf16 fallback, recompute off |
+| `fb` | bf16 fallback (Qwen3: recompute is not a variable — its preset sets `cuda_graph_impl=transformer_engine`, which asserts against full recompute) |
+| `nat` | native, no architecture workarounds |
+
+Two things to read carefully. The y-axis is shared and linear from zero, which
+compresses the bf16 rows against the ~60k nvfp4 bars — that 6× gap is the
+headline, so it is not broken or log-scaled, and every bar prints its value.
+And only 8 of the 65 configs ran on both machines, so most bars are
+single-series: the quantized paths are GB300-only because sm_107 has no `ptxas`
+target. Compare machines only where two bars sit side by side.
+
+`comparison.csv` is the same data for spreadsheets.
+
 ## Raw comparisons
 
 `%diff` is VR200 vs GB300 on tokens/s/GPU; positive means VR200 faster. Italic
