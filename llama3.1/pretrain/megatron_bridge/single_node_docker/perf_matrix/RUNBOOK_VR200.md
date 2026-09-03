@@ -113,19 +113,30 @@ Five levers, all bf16, none needing a kernel the container might lack.
 
 | Lever | GB300 measurement | Hypothesis for VR200 |
 | --- | --- | --- |
-| **Qwen3 MBS=1 -> 2 (and 4)** | **1.91x measured** (7,860 -> 15,042 tok/s/GPU, bf16, same container) | **Run this first.** By far the largest portable win found, and it is pure batch shape — no kernel involved, so it should transfer directly. The VR200 reference is MBS=1, so this lever is untouched there. MBS=4 is untested on either machine (the GB300 attempt died with the node); MBS=8 OOMs, so 4 is the last candidate. |
+| **Qwen3 MBS=1 -> 4** | **3.10x measured** (7,860 -> 15,042 -> 24,372 tok/s/GPU at MBS 1/2/4, bf16, same container, GBS fixed at 256) | **Run this first.** By far the largest portable win found — larger than every other lever combined, outside the missing-kernel gap itself. Pure batch shape, no kernel involved, so it should transfer directly. The VR200 reference is MBS=1, so this lever is completely untouched there. MBS=8 OOMs, so 4 is the ceiling at `EP=4` on one node. |
 | **Drop full recompute (llama)** | untested on either | Full recompute was added *because* unfused attention materialises the score matrix, and it costs ~30% extra compute. At MBS=1/seq 8192 that tensor is ~4 GiB on a ~280 GB GPU. If it is not needed, this is the largest remaining llama win. |
 | **llama MBS=2 / MBS=4** | MBS=2: 3.457 -> 3.410 s/iter (+1.4%) | QUICKSTART says MBS=1 is *required* because unfused attention OOMs at MBS=2. That **did not reproduce** on a 284 GB GB300 with the identical unfused-attention config. MBS=4 in the *fallback* path is untested — worth trying given MBS dominated everywhere else. |
 | **Larger GBS (32, 64)** | GA=1 -> 4 gave +4.0% on nvfp4 | Amortises the optimizer step and DP all-reduce over more microbatches. No arch dependency. Applies to llama (reference is GBS=8); Qwen3 is already GBS=256/GA=64, so GBS has little headroom there — for Qwen3 the lever is MBS, not GBS. |
 | **`nemo:26.08.00`** | bf16-fallback 3.457 -> 3.400 s/iter (+1.7%) | Free if it works, and bf16 is confirmed OK on sm_107 for that image. Compare with **`s/iter`, not TFLOPS** — see the accounting caveat in the README. |
 
 The Qwen3 MBS lever is the one that changed since this runbook was first
-written. The GB300 MoE sweep found that **MBS dominates precision** for
-Qwen3 30B-A3B at `EP=4`: raising MBS nearly doubled throughput, while
-switching bf16 -> fp8 at MBS=1 made it **37% slower**. VR200 cannot run fp8
-at all, but it can raise MBS, so this is a portable win that costs nothing
-but a config change. If it reproduces, VR200's own Qwen3 ceiling moves well
-above the 9,317 tok/s/GPU reference.
+written, and it kept growing as the sweep filled in. On GB300 at `EP=4`,
+with GBS fixed at 256 and only MBS varying:
+
+| MBS | tok/s/GPU | vs MBS=1 |
+| --- | --- | --- |
+| 1 (the reference) | 7,860 | — |
+| 2 | 15,042 | 1.91x |
+| 4 | **24,372** | **3.10x** |
+| 8 | OOM | — |
+
+Meanwhile switching bf16 -> fp8 at MBS=1 made it **37% slower**. So for this
+MoE, **MBS dominates precision by a wide margin**. VR200 cannot run fp8 at
+all, but it can raise MBS — a portable win costing nothing but a config
+change. If 3.10x reproduces on sm_107, VR200's Qwen3 ceiling moves from
+9,317 to roughly 29,000 tok/s/GPU, which would put it *ahead* of GB300's
+best MoE number. Worth knowing before concluding a bf16-only machine is
+out of headroom.
 
 ---
 

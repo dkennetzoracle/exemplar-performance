@@ -68,7 +68,7 @@ only post-training eval, not the timed iterations.
 | Workload | VR200 best | GB300 best | GB300 advantage |
 | --- | --- | --- | --- |
 | llama3.1 8B | 6,543 tok/s/GPU (bf16 — its ceiling) | **59,282** tok/s/GPU (nvfp4, 26.08.00, MBS=4 GBS=64) | **9.06x** |
-| Qwen3 30B-A3B | 9,317 tok/s/GPU (bf16 — its ceiling) | **15,042** tok/s/GPU (bf16, 26.06.01, MBS=2 GBS=256) | **1.61x** |
+| Qwen3 30B-A3B | 9,317 tok/s/GPU (bf16 — its ceiling) | **24,372** tok/s/GPU (bf16, 26.06.01, MBS=4 GBS=256) | **2.62x** |
 
 The two workloads behave completely differently, and the dense-model headline
 does **not** generalise. Anyone extrapolating 9x to a mixture-of-experts
@@ -108,7 +108,8 @@ backend for sm_103), and `TP=PP=CP=1` pinned on every fp8_cs row (the stock
 
 | Container | Precision | MBS | GBS | s/iter | TFLOPS/GPU | tok/s/GPU | vs VR200 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 26.06.01 | bf16 | 2 | 256 | 17.427 | 346.08 | **15,042** | **1.61x** |
+| 26.06.01 | bf16 | 4 | 256 | 10.756 | 560.69 | **24,372** | **2.62x** |
+| 26.06.01 | bf16 | 2 | 256 | 17.427 | 346.08 | 15,042 | 1.61x |
 | 26.08.00 | fp8_cs | 2 | 256 | 26.402 | 228.40 | 9,929 | 1.07x |
 | 26.08.00 | bf16 | 1 | 256 | 32.335 | 186.50 | 8,107 | VR200 +14.9% |
 | 26.06.01 | bf16 | 1 | 256 | 33.350 | 180.84 | 7,860 | VR200 +18.5% |
@@ -117,9 +118,19 @@ backend for sm_103), and `TP=PP=CP=1` pinned on every fp8_cs row (the stock
 
 **MoE findings — the opposite of the dense model:**
 
-- **MBS dominates precision.** MBS=1 -> 2 at bf16, same container, nearly
-  doubles throughput: 7,860 -> 15,042 tok/s/GPU (**1.91x**). No precision change
-  came close to that.
+- **MBS dominates everything.** Same container, same precision, GBS fixed at
+  256, only MBS varying:
+
+  | MBS | tok/s/GPU | vs MBS=1 |
+  | --- | --- | --- |
+  | 1 | 7,860 | — |
+  | 2 | 15,042 | 1.91x |
+  | 4 | **24,372** | **3.10x** |
+  | 8 | OOM | — |
+
+  MBS=1 -> 4 is worth **3.10x**, which is larger than any other lever found in
+  this work outside the missing-kernel gap itself. MBS=8 OOMs, so 4 is the
+  ceiling at `EP=4` on one node. No precision change came remotely close.
 - **fp8 *hurts* this MoE.** At MBS=1, same container, fp8_cs is **37% slower**
   than bf16 (4,939 vs 7,860) — slower even than the six-workaround bf16
   fallback. With `EP=4` the per-expert GEMMs are too small to amortise
@@ -209,9 +220,8 @@ Both GB300 nodes were lost to a cluster-wide node failure mid-queue (idle nodes
 completed results above were unaffected: the per-run logs live on shared
 storage with metrics already parsed in place.
 
-- **Qwen3 MBS=4** (both containers). MBS=1 -> 2 gave 1.91x, so this is the
-  largest open question for the best MoE number. Untested, not known-bad — the
-  one attempt died with the node.
+- **Qwen3 MBS=4 on 26.08.00.** The 26.06.01 measurement is done (24,372
+  tok/s/GPU, 2.62x); whether the newer container adds to it is open.
 - **Qwen3 fp8_cs at MBS=2 on 26.06.01**, the missing cell that would make the
   MBS=2 precision comparison same-container. The 26.08.00 fp8 row above cannot
   be compared directly against the 26.06.01 bf16 row (see section 4).

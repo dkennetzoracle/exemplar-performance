@@ -18,6 +18,8 @@ F-2606-q30-bf16-mbs1,qwen3-30b-a3b,26.06.01,bf16,v1,gb300,4,1,1,1,4,4,1,256,64,t
 F-2606-q30-bf16-mbs2,qwen3-30b-a3b,26.06.01,bf16,v1,gb300,4,1,1,1,4,4,2,256,32,transformer_engine,4096,50,OK,17.427,0.060,346.08,1.19,15042,,,pretrain_qwen3_30b_a3b_bf16_gpus4_tp1_pp1_cp1_vpNone_ep4_etp1_mbs2_gbs256
 F-2606-q30-fp8cs-mbs1,qwen3-30b-a3b,26.06.01,fp8_cs,v1,gb300,4,1,1,1,4,4,1,256,64,transformer_engine,4096,50,OK,53.072,0.246,113.64,0.53,4939,,,pretrain_qwen3_30b_a3b_fp8_cs_gpus4_tp1_pp1_cp1_vpNone_ep4_etp1_mbs1_gbs256
 F-2606-q30-fp8cs-mbs2,qwen3-30b-a3b,26.06.01,fp8_cs,v1,gb300,4,1,1,1,4,4,2,256,32,transformer_engine,4096,5,FAILED,,,,,,unknown,see log,pretrain_qwen3_30b_a3b_fp8_cs_gpus4_tp1_pp1_cp1_vpNone_ep4_etp1_mbs2_gbs256
+G-2606-q30-bf16-mbs4,qwen3-30b-a3b,26.06.01,bf16,v1,gb300,4,1,1,1,4,4,4,256,16,transformer_engine,4096,50,OK,10.756,0.006,560.69,0.31,24372,,,pretrain_qwen3_30b_a3b_bf16_gpus4_tp1_pp1_cp1_vpNone_ep4_etp1_mbs4_gbs256
+G-2606-q30-fp8cs-mbs2,qwen3-30b-a3b,26.06.01,fp8_cs,v1,gb300,4,1,1,1,4,4,2,256,32,transformer_engine,4096,31,FAILED,,,,,,unknown,see log,pretrain_qwen3_30b_a3b_fp8_cs_gpus4_tp1_pp1_cp1_vpNone_ep4_etp1_mbs2_gbs256
 N2-anchor-2606-l8-bf16fallback,llama3.1-8b,26.06.01,nvfp4,v1,gb200,4,1,1,1,1,4,1,8,2,local,8192,50,OK,3.459,0.001,243.84,0.05,4737,,,pretrain_llama31_8b_nvfp4_gpus4_tp1_pp1_cp1_vpNone_ep1_etpNone_mbs1_gbs8
 S-2608-l8-fp8cs-mbs2,llama3.1-8b,26.08.00,fp8_cs,v1,gb300,4,1,1,1,1,4,2,8,1,local,8192,50,OK,0.420,0.004,1916.32,17.78,39010,,,pretrain_llama31_8b_fp8_cs_gpus4_tp1_pp1_cp1_vpNone_ep1_etpNone_mbs2_gbs8
 S-2608-l8-fp8cs-mbs4,llama3.1-8b,26.08.00,fp8_cs,v1,gb300,4,1,1,1,1,4,4,16,1,local,8192,50,OK,0.810,0.005,1987.11,12.03,40454,,,pretrain_llama31_8b_fp8_cs_gpus4_tp1_pp1_cp1_vpNone_ep1_etpNone_mbs4_gbs16
