@@ -219,12 +219,21 @@ run_portable () {
             ./launch_local.sh
     done
 
-    # GBS / gradient-accumulation sweep at the reference MBS=1.
+    # GBS / gradient-accumulation sweep at the reference MBS=1, crossed with
+    # recompute. Both states matter: on sm_107 the two levers STACK -- dropping
+    # recompute gave +40.7% alone and +43.8% together with GBS=64, which is
+    # that machine's ceiling. Sweeping GBS with recompute pinned on would have
+    # missed the winning combination entirely.
     for gbs in 32 64; do
-        run por-$T-llama31-8b-bf16-mbs1-gbs$gbs $COMMON $L8 \
+        run por-$T-llama31-8b-bf16-mbs1-gbs$gbs-recompute $COMMON $L8 \
             GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=1 GBS=$gbs \
             EXTRA_ENV="$FALLBACK_ENV" \
             EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $RECOMPUTE_FULL $EVAL_OVR" \
+            ./launch_local.sh
+        run por-$T-llama31-8b-bf16-mbs1-gbs$gbs-norecompute $COMMON $L8 \
+            GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=1 GBS=$gbs \
+            EXTRA_ENV="$FALLBACK_ENV" \
+            EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $RECOMPUTE_OFF $EVAL_OVR" \
             ./launch_local.sh
     done
 
