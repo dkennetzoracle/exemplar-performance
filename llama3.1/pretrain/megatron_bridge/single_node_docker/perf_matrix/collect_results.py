@@ -191,6 +191,69 @@ def parse_log(path: str) -> dict | None:
     )
 
 
+
+def compare_to_vr200(row: dict, base_tokens: float | None) -> dict:
+    """Add the VR200-relative columns and the mechanism behind each row.
+
+    Sign convention: VR200 is the reference, so `vr200_advantage_pct` is
+    positive when VR200 is faster, computed ratio-wise as
+    (VR200 / GB300 - 1) * 100 on tokens/s/GPU. When GB300 is ahead the delta
+    goes in `gb300_speedup_x` instead, because a negative "advantage" on the
+    reference's own row reads as if the reference regressed.
+    """
+    # `precision` is the PRESET name, not the precision actually executed.
+    # llama31_8b has no bf16 preset, so the fallback selects the nvfp4 preset
+    # and overrides the precision to bf16 -- the row reads "nvfp4" while the
+    # run is bf16. So the fallback test must come FIRST; checking `quantized`
+    # first mislabels every llama fallback row as unrunnable on VR200, which
+    # is exactly the config VR200 does run as its reference.
+    is_fallback = "fallback" in row["tag"]
+    quantized = (not is_fallback) and row["precision"].startswith(("fp8", "nvfp4"))
+    moe = row["workload"] == "qwen3-30b-a3b"
+
+    # Why this config can or cannot run on VR200, and what drives the gap.
+    if row["tag"].startswith("VR200-reference"):
+        reason = ("The VR200 baseline itself: bf16 fallback, and this machine's CEILING "
+                  "rather than a handicap -- TE ships no sm_107a cubin and no PTX, so no "
+                  "quantized precision runs at any setting. Every other row is measured "
+                  "against this.")
+    elif is_fallback:
+        reason = ("Runnable on both: the bf16 fallback lands in cuBLAS/cuDNN, which ship "
+                  "with the driver rather than the container, so it works on an arch the "
+                  "container has no cubins for. This is the apples-to-apples row, and "
+                  "VR200 wins it because Rubin's bf16 silicon is genuinely faster. "
+                  "NOTE: `precision` shows the preset (nvfp4 for llama, which has no bf16 "
+                  "preset); the executed precision is bf16.")
+    elif quantized:
+        reason = ("VR200 CANNOT RUN THIS: TransformerEngine ships no sm_107a cubin and "
+                  "te_ptx_entries=0, so there is no PTX to JIT from and the quantize "
+                  "kernel fails outright. The GB300 advantage here is unlocked software, "
+                  "not raw FLOPs.")
+    else:
+        reason = ("bf16 without the arch workarounds. Runnable on VR200 only in part: "
+                  "dropping Triton/cuDNN fusions needs kernels sm_107 lacks. The MBS and "
+                  "GBS portion of the gain IS portable -- pure batch shape, no kernel.")
+    if moe and row["mbs"] in ("2", "4"):
+        reason += (" MBS above 1 is the dominant lever for this MoE (1 -> 4 measured "
+                   "3.10x) and is arch-independent, so it should transfer to sm_107.")
+
+    out = dict(vr200_advantage_pct="", gb300_speedup_x="", vs_vr200="", reason_vs_vr200=reason)
+    if not row["tokens_s_per_gpu"] or not base_tokens:
+        out["vs_vr200"] = "no metrics" if not row["tokens_s_per_gpu"] else ""
+        return out
+    tok = float(row["tokens_s_per_gpu"])
+    if row["tag"].startswith("VR200-reference"):
+        out["vs_vr200"] = "reference"
+        return out
+    if tok >= base_tokens:
+        out["gb300_speedup_x"] = f"{tok / base_tokens:.2f}"
+        out["vs_vr200"] = f"{tok / base_tokens:.2f}x GB300"
+    else:
+        out["vr200_advantage_pct"] = f"{(base_tokens / tok - 1) * 100:.1f}"
+        out["vs_vr200"] = f"VR200 +{(base_tokens / tok - 1) * 100:.1f}%"
+    return out
+
+
 def vr_row(wl: str) -> dict:
     r = VR200_REFERENCE[wl]
     return dict(
@@ -224,6 +287,14 @@ def main() -> int:
         print(f"no launcher logs found in {args.results_dir}", file=sys.stderr)
         return 1
     rows += [vr_row(w) for w in sorted({r["workload"] for r in rows} & VR200_REFERENCE.keys())]
+
+    # Baseline per workload = the VR200 reference row's tokens/s/GPU.
+    bases = {}
+    for r in rows:
+        if r["tag"].startswith("VR200-reference") and r["tokens_s_per_gpu"]:
+            bases[r["workload"]] = float(r["tokens_s_per_gpu"])
+    for r in rows:
+        r.update(compare_to_vr200(r, bases.get(r["workload"])))
 
     out = args.out or os.path.join(args.results_dir, "perf_matrix.csv")
     with open(out, "w", newline="") as fh:
