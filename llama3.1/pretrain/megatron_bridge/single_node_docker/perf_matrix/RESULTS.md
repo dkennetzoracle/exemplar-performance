@@ -67,40 +67,69 @@ only post-training eval, not the timed iterations.
 
 | Workload | VR200 best | GB300 best | GB300 advantage |
 | --- | --- | --- | --- |
-| llama3.1 8B | 6,543 tok/s/GPU (bf16 — its ceiling) | **59,282** tok/s/GPU (nvfp4, 26.08.00, MBS=4 GBS=64) | **9.06×** |
-| Qwen3 30B-A3B | 9,317 tok/s/GPU (bf16 — its ceiling) | *pending* | *pending* |
+| llama3.1 8B | 6,543 tok/s/GPU (bf16 — its ceiling) | **59,282** tok/s/GPU (nvfp4, 26.08.00, MBS=4 GBS=64) | **9.06x** |
+| Qwen3 30B-A3B | 9,317 tok/s/GPU (bf16 — its ceiling) | **15,042** tok/s/GPU (bf16, 26.06.01, MBS=2 GBS=256) | **1.61x** |
 
-### llama3.1 8B, full sweep
+The two workloads behave completely differently, and the dense-model headline
+does **not** generalise. Anyone extrapolating 9x to a mixture-of-experts
+workload would be wrong by nearly an order of magnitude.
+
+### llama3.1 8B, full sweep (seq_len 8192)
 
 | Container | Precision | MBS | GBS | s/iter | TFLOPS/GPU | tok/s/GPU | vs VR200 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 26.08.00 | nvfp4 | 4 | 64 | 2.211 | 2910.78 | **59,282** | **9.06×** |
-| 26.08.00 | nvfp4 | 4 | 16 | 0.575 | 2797.83 | 56,988 | 8.71× |
-| 26.08.00 | nvfp4 v2 | 4 | 16 | 0.579 | 2778.50 | 56,594 | 8.65× |
-| 26.08.00 | nvfp4 | 2 | 8 | 0.317 | 2536.95 | 51,685 | 7.90× |
-| 26.06.01 | nvfp4 | 4 | 16 | 0.647 | 2607.07 | 50,646 | 7.74× |
-| 26.06.01 | nvfp4 | 2 | 8 | 0.353 | 2392.00 | 46,414 | 7.09× |
-| 26.08.00 | fp8_cs | 4 | 16 | 0.810 | 1987.11 | 40,454 | 6.18× |
-| 26.08.00 | fp8_cs | 2 | 8 | 0.420 | 1916.32 | 39,010 | 5.96× |
-| 26.06.01 | fp8_cs | 4 | 16 | 0.860 | 1962.03 | 38,102 | 5.82× |
-| 26.06.01 | fp8_cs | 2 | 8 | 0.453 | 1860.35 | 36,168 | 5.53× |
+| 26.08.00 | nvfp4 | 4 | 64 | 2.211 | 2910.78 | **59,282** | **9.06x** |
+| 26.08.00 | nvfp4 | 4 | 16 | 0.575 | 2797.83 | 56,988 | 8.71x |
+| 26.08.00 | nvfp4 v2 | 4 | 16 | 0.579 | 2778.50 | 56,594 | 8.65x |
+| 26.08.00 | nvfp4 | 2 | 8 | 0.317 | 2536.95 | 51,685 | 7.90x |
+| 26.06.01 | nvfp4 | 4 | 16 | 0.647 | 2607.07 | 50,646 | 7.74x |
+| 26.06.01 | nvfp4 | 2 | 8 | 0.353 | 2392.00 | 46,414 | 7.09x |
+| 26.08.00 | fp8_cs | 4 | 16 | 0.810 | 1987.11 | 40,454 | 6.18x |
+| 26.08.00 | fp8_cs | 2 | 8 | 0.420 | 1916.32 | 39,010 | 5.96x |
+| 26.06.01 | fp8_cs | 4 | 16 | 0.860 | 1962.03 | 38,102 | 5.82x |
+| 26.06.01 | fp8_cs | 2 | 8 | 0.453 | 1860.35 | 36,168 | 5.53x |
 | 26.08.00 | bf16 fallback | 1 | 8 | 3.400 | 236.61 | 4,819 | VR200 +35.8% |
 | 26.06.01 | bf16 fallback | 2 | 8 | 3.410 | 247.32 | 4,805 | VR200 +36.2% |
 | 26.06.01 | bf16 fallback | 1 | 8 | 3.457 | 243.91 | 4,739 | VR200 +38.1% |
 
-Deviations carried by the quantized rows, to report alongside them:
+Deviations the quantized rows carry, to report alongside them:
 `fp8_dot_product_attention=false` on every nvfp4 row (no TE fp8-attention
 backend for sm_103), and `TP=PP=CP=1` pinned on every fp8_cs row (the stock
 `gb300` fp8 preset is an 8-GPU shape with `TP*PP*CP=8`).
 
-**Findings:**
-- **nvfp4 > fp8_cs** by ~30–35% at every shape, on both containers.
-- **MBS=4 is the ceiling.** MBS=8 OOMs at both precisions (activation memory
-  > 276 GiB/GPU).
-- **Gradient accumulation still pays** at the MBS ceiling: GA=1→4 gave +4.0%.
-- **Config variant v1 ≈ v2** (v2 0.7% slower); not a meaningful lever.
+**Dense findings:**
+- **nvfp4 > fp8_cs** by ~30-35% at every shape, on both containers.
+- **MBS=4 is the ceiling.** MBS=8 OOMs at both precisions.
+- **Gradient accumulation still pays** at the MBS ceiling: GA=1 -> 4 gave +4.0%.
+  It had not plateaued, so GBS 128/256 remain untested.
+- **Config variant v1 ~= v2** (v2 0.7% slower); not a meaningful lever.
 
----
+### Qwen3 30B-A3B, full sweep (seq_len 4096, EP=4, alltoall)
+
+| Container | Precision | MBS | GBS | s/iter | TFLOPS/GPU | tok/s/GPU | vs VR200 |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 26.06.01 | bf16 | 2 | 256 | 17.427 | 346.08 | **15,042** | **1.61x** |
+| 26.08.00 | fp8_cs | 2 | 256 | 26.402 | 228.40 | 9,929 | 1.07x |
+| 26.08.00 | bf16 | 1 | 256 | 32.335 | 186.50 | 8,107 | VR200 +14.9% |
+| 26.06.01 | bf16 | 1 | 256 | 33.350 | 180.84 | 7,860 | VR200 +18.5% |
+| 26.06.01 | bf16 fallback | 1 | 256 | 37.202 | 162.12 | 7,047 | VR200 +32.2% |
+| 26.06.01 | fp8_cs | 1 | 256 | 53.072 | 113.64 | 4,939 | VR200 +88.6% |
+
+**MoE findings — the opposite of the dense model:**
+
+- **MBS dominates precision.** MBS=1 -> 2 at bf16, same container, nearly
+  doubles throughput: 7,860 -> 15,042 tok/s/GPU (**1.91x**). No precision change
+  came close to that.
+- **fp8 *hurts* this MoE.** At MBS=1, same container, fp8_cs is **37% slower**
+  than bf16 (4,939 vs 7,860) — slower even than the six-workaround bf16
+  fallback. With `EP=4` the per-expert GEMMs are too small to amortise
+  quantize/dequantize, so fp8 is pure overhead.
+- **The workarounds barely matter here.** Dropping all six bought +11.5%
+  (7,047 -> 7,860), versus 9.66x on the dense model, because at GBS=256/MBS=1
+  the time goes into expert dispatch and small GEMMs rather than the fused
+  attention and compile paths the workarounds disable.
+- **Practical rule: size the microbatch first.** Enabling fp8 at low MBS on an
+  MoE makes it slower.
 
 ## 3. What the missing kernels cost — measured, not extrapolated
 
@@ -175,9 +204,22 @@ Worth recording because they are what make the comparisons above defensible.
 
 ## Pending
 
-- Qwen3 30B-A3B native (bf16 and fp8_cs, MBS 1/2/4) on both containers.
+Both GB300 nodes were lost to a cluster-wide node failure mid-queue (idle nodes
+600 -> 356, `down*` 123 -> 182 across the partition), so these gaps remain. All
+completed results above were unaffected: the per-run logs live on shared
+storage with metrics already parsed in place.
+
+- **Qwen3 MBS=4** (both containers). MBS=1 -> 2 gave 1.91x, so this is the
+  largest open question for the best MoE number. Untested, not known-bad — the
+  one attempt died with the node.
+- **Qwen3 fp8_cs at MBS=2 on 26.06.01**, the missing cell that would make the
+  MBS=2 precision comparison same-container. The 26.08.00 fp8 row above cannot
+  be compared directly against the 26.06.01 bf16 row (see section 4).
+- **llama nvfp4 MBS=4 at GBS 128/256.** GA had not plateaued at GBS=64.
 - `NVTE_DEBUG=1 NVTE_DEBUG_LEVEL=2` capture of TE's backend-selection
   reasoning for the fp8-attention failure.
-- Everything on a real VR200 node — see [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md).
-  The `portable` row set there is untested; the recompute question in
-  particular is open and is the largest potential win for a bf16-only machine.
+- On the VR200 side, the arch gate and the `reference` row set are **done and
+  reproduced** (see the re-measured table in section 1); `native` and
+  `portable` were still running as of that commit. The recompute question in
+  `portable` remains the largest potential win for a bf16-only machine — see
+  [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md).

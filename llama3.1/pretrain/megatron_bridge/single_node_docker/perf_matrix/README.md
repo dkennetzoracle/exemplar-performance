@@ -72,6 +72,47 @@ sweeps. Use `tokens/s/GPU` for anything crossing a container or a batch shape.
 
 ---
 
+## Batch-shape terminology
+
+Every table in these docs reports the batch shape, because throughput is
+meaningless without it. The launcher prints all of these on its `Plan:` line.
+
+| Term | Meaning |
+| --- | --- |
+| **MBS** | *Micro batch size* — samples in one forward/backward pass on **one GPU**. The hardware knob. |
+| **GBS** | *Global batch size* — samples per **optimizer step**, summed over all data-parallel ranks and all accumulation steps. The training knob. |
+| **GA** | *Gradient accumulation steps* — micro-batches each rank runs before the optimizer updates. |
+| **DP** | *Data-parallel size*. With `TP=PP=CP=1` on 4 GPUs, `DP=4`. |
+| **TP / PP / CP / EP** | Tensor / pipeline / context / expert parallel size. `EP` applies to MoE models only. |
+| **seq_len** | Sequence length. 8192 for llama3.1 8B, 4096 for Qwen3 30B-A3B. |
+
+They are related by:
+
+```
+GBS = MBS x DP x GA          tokens per iteration = GBS x seq_len
+```
+
+Why the distinction matters when reading these results:
+
+* **MBS is memory-bound and drives efficiency.** Activations scale with it,
+  which is what set the ceilings here — MBS=8 OOMed llama3.1 8B, and the Qwen3
+  preset's MBS=8 OOMed at 267.95/276.62 GiB. Larger MBS means larger GEMMs,
+  which is why raising it helped everywhere, and why fp8 at MBS=1 was
+  *slower* than bf16 on the MoE: the per-expert GEMMs were too small to
+  amortise quantisation overhead.
+* **GBS changes what you are training, not just how fast.** Fewer optimizer
+  steps per token, different effective LR dynamics. It is not a free
+  performance dial, which is why the recipe's validated presets pick it
+  deliberately — quote the best throughput *and* its GBS.
+* **GA is the genuinely free lever.** At fixed MBS, a larger GBS just adds
+  accumulation steps, amortising the optimizer step and the DP all-reduce over
+  more micro-batches.
+
+It also explains why `s/iter` cannot be compared across rows with different
+`GBS`, and why `collect_results.py` ranks by `tokens/s/GPU` instead.
+
+---
+
 ## Known failure modes
 
 `collect_results.py` keeps failed configs as rows and classifies each, so an
