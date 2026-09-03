@@ -186,15 +186,34 @@ run_native () {
 #                on sm_107 per arch_support/nemo-26.08.00.md.
 # ===========================================================================
 run_portable () {
-    # MBS x recompute, at the reference GBS so rows stay comparable to it.
-    for mbs in 1 2; do
+    # Qwen3 MBS first: 1 -> 2 measured 1.91x on GB300 (7,860 -> 15,042
+    # tok/s/GPU), the largest portable win found, and pure batch shape. GBS is
+    # already 256 (GA=64) so MBS is the only lever with headroom here. No
+    # recompute row -- see the note in run_reference.
+    for mbs in 2 4; do
+        run por-$T-qwen3-30b-bf16-mbs$mbs $COMMON $Q30 \
+            GPU_TYPE=vr200 DTYPE=bf16 CONFIG_VARIANT=v1 EP=4 MOE_BACKEND=alltoall \
+            MBS=$mbs GBS=256 \
+            EXTRA_ENV="$FALLBACK_ENV" \
+            EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $MOE_OVERRIDES $EVAL_OVR" \
+            ./launch_local.sh
+    done
+
+    # llama MBS x recompute. MBS=4 is untested in the fallback path on either
+    # machine; MBS dominated every other lever, so it is worth the two runs
+    # even if it OOMs.
+    for mbs in 1 2 4; do
+        # GBS must be a multiple of DP*MBS. The reference GBS=8 covers MBS=1
+        # (GA=2) and MBS=2 (GA=1), but MBS=4 needs at least 16. Comparing
+        # across the resulting shapes is exactly what tokens/s/GPU is for.
+        gbs=$((mbs * JOB_TOTAL_GPUS)); ((gbs < 8)) && gbs=8
         run por-$T-llama31-8b-bf16-mbs$mbs-recompute $COMMON $L8 \
-            GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=$mbs GBS=8 \
+            GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=$mbs GBS=$gbs \
             EXTRA_ENV="$FALLBACK_ENV" \
             EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $RECOMPUTE_FULL $EVAL_OVR" \
             ./launch_local.sh
         run por-$T-llama31-8b-bf16-mbs$mbs-norecompute $COMMON $L8 \
-            GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=$mbs GBS=8 \
+            GPU_TYPE=gb200 DTYPE=nvfp4 CONFIG_VARIANT=v1 MBS=$mbs GBS=$gbs \
             EXTRA_ENV="$FALLBACK_ENV" \
             EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $RECOMPUTE_OFF $EVAL_OVR" \
             ./launch_local.sh
@@ -209,16 +228,6 @@ run_portable () {
             ./launch_local.sh
     done
 
-    # Qwen3: GBS is already 256 (GA=64) so GA has little headroom; MBS is the
-    # lever. No recompute row -- see the note in run_reference.
-    for mbs in 2 4; do
-        run por-$T-qwen3-30b-bf16-mbs$mbs $COMMON $Q30 \
-            GPU_TYPE=vr200 DTYPE=bf16 CONFIG_VARIANT=v1 EP=4 MOE_BACKEND=alltoall \
-            MBS=$mbs GBS=256 \
-            EXTRA_ENV="$FALLBACK_ENV" \
-            EXTRA_HYDRA_OVERRIDES="$FALLBACK_OVERRIDES_BASE $MOE_OVERRIDES $EVAL_OVR" \
-            ./launch_local.sh
-    done
 }
 
 case $MODE in
