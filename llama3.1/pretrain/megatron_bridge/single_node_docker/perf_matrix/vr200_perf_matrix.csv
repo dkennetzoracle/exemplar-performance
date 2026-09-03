@@ -1,0 +1,14 @@
+tag,workload,container,precision,config_variant,mbs,gbs,s_iter,tflops_per_gpu,tokens_s_per_gpu,failure_code,is_fallback
+vr-260601-llama3.1-8b-recompute-mbs1-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,1,8,2.504,336.80,6543,,True
+vr-260601-llama3.1-8b-recompute-mbs1-gbs32,llama3.1-8b,26.06.01,nvfp4,v1,1,32,9.891,341.02,6626,,True
+vr-260601-llama3.1-8b-recompute-mbs1-gbs64,llama3.1-8b,26.06.01,nvfp4,v1,1,64,19.743,341.70,6639,,True
+vr-260601-llama3.1-8b-recompute-mbs2-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,2,8,2.460,342.88,6660,,True
+vr-260601-llama3.1-8b-recompute-mbs4-gbs16,llama3.1-8b,26.06.01,nvfp4,v1,4,16,4.843,348.27,6766,,True
+vr-260601-llama3.1-8b-norecompute-mbs1-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,1,8,1.779,473.99,9210,,True
+vr-260601-llama3.1-8b-norecompute-mbs1-gbs32,llama3.1-8b,26.06.01,nvfp4,v1,1,32,6.989,482.68,9377,,True
+vr-260601-llama3.1-8b-norecompute-mbs1-gbs64,llama3.1-8b,26.06.01,nvfp4,v1,1,64,13.936,484.08,9405,,True
+vr-260601-llama3.1-8b-norecompute-mbs2-gbs8,llama3.1-8b,26.06.01,nvfp4,v1,2,8,,,,oom_dense,True
+vr-260601-llama3.1-8b-norecompute-mbs4-gbs16,llama3.1-8b,26.06.01,nvfp4,v1,4,16,,,,oom_dense,True
+vr-260601-qwen3-30b-a3b-fallback-mbs1-gbs256,qwen3-30b-a3b,26.06.01,bf16,v1,1,256,28.189,213.98,9300,,True
+vr-260601-qwen3-30b-a3b-fallback-mbs2-gbs256,qwen3-30b-a3b,26.06.01,bf16,v1,2,256,,,,oom_moe,True
+vr-260601-qwen3-30b-a3b-fallback-mbs4-gbs256,qwen3-30b-a3b,26.06.01,bf16,v1,4,256,,,,oom_moe,True

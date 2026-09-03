@@ -101,6 +101,8 @@ def load(path: str) -> dict:
     for r in csv.DictReader(open(path)):
         if r["tag"].startswith("VR200-reference-"):
             continue  # synthetic row; the measured ref- row covers it
+        if (r.get("failure_code") or "") == "in_flight":
+            continue  # still executing or killed mid-run; not a result
         key = (r["workload"], r["container"], path_label(r), r["mbs"], r["gbs"])
         # Prefer a successful row if the same config was run more than once
         # (e.g. an anchor repeat), otherwise keep the failure so it is visible.

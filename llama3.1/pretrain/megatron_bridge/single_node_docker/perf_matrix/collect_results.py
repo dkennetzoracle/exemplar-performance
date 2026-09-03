@@ -189,10 +189,20 @@ def parse_log(path: str) -> dict | None:
         status = "FAILED"
         note = CAUSE_TEXT.get(code, "see log")
         if not code:
-            code = "unknown" if iters < 50 else "metrics_unparsed"
+            # A diagnosed failure carries a code even with few iterations
+            # (an OOM logs one or two first). An undiagnosed partial run is
+            # either still executing or was killed mid-run -- not a result,
+            # so it must not render as a failure in the comparison table.
+            code = "in_flight" if 0 < iters < 50 else (
+                "unknown" if iters == 0 else "metrics_unparsed")
             if code == "metrics_unparsed":
                 note = ("training completed but no metrics; run backfill_metrics.sh "
                         "(the parser needs typer -- see setup_images.sh)")
+        if code == "in_flight":
+            status = "RUNNING"
+            note = (f"only {iters}/50 iterations and no diagnosed failure: still "
+                    "executing, or killed mid-run. Not a result -- excluded from "
+                    "COMPARISON.md rather than shown as a failure.")
 
     return dict(
         tag=tag,
