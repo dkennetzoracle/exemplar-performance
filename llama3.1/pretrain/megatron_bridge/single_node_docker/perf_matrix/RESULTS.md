@@ -1,5 +1,10 @@
 # Measured results: GB300 (sm_103) vs Vera Rubin (sm_107)
 
+> **Headline updated:** the dense advantage is now **6.16×**, not 6.31× — the
+> VR200 side gained the `nemo:26.08.00` container lever after that figure was
+> written, lifting its ceiling from 9,405 to 9,635 tokens/s/GPU. See
+> [`SUMMARY.md`](SUMMARY.md).
+>
 > **Just want the numbers?** [`COMPARISON.md`](COMPARISON.md) is the raw
 > side-by-side: one row per config, both machines in adjacent columns, with a
 > percent-difference column. This file is the narrative around them.
@@ -100,14 +105,14 @@ only post-training eval, not the timed iterations.
 
 | Workload | VR200 reference | VR200 **tuned** best | GB300 best | vs VR200 tuned |
 | --- | --- | --- | --- | --- |
-| llama3.1 8B | 6,543 tok/s/GPU | **9,405** (bf16, no recompute, GBS=64) | **59,389** (nvfp4, 26.08.00, MBS=4 GBS=256) | **6.31x** |
+| llama3.1 8B | 6,543 tok/s/GPU | **9,405** (bf16, no recompute, GBS=64) | **59,389** (nvfp4, 26.08.00, MBS=4 GBS=256) | **6.16x** |
 | Qwen3 30B-A3B | 9,317 tok/s/GPU | 9,317 (no portable lever ran — MBS OOMs) | **24,372** (bf16, 26.06.01, MBS=4 GBS=256) | **2.62x** |
 
 **Quote the tuned column, not the reference column.** Measuring GB300's best
 against VR200's *reference* gives llama3.1 8B 9.08x, but that compares a tuned
 config to an untuned one. VR200's own portable sweep lifts it to 9,405
 tok/s/GPU by dropping full recompute (+43.8%), which brings the honest dense
-advantage down to **6.31x**. Qwen3 is unchanged at 2.62x because none of the
+advantage down to **6.16x**. Qwen3 is unchanged at 2.62x because none of the
 portable levers ran on sm_107 — its MBS rows OOM under unfused attention.
 
 The two workloads behave completely differently, and the dense-model headline

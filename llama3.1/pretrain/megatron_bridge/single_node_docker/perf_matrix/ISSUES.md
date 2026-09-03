@@ -17,8 +17,8 @@ documented override · **FIXED** fixed in this repo.
 ## A. Architecture coverage — needs a rebuilt container
 
 These are the only items that block on NVIDIA. Together they are the entire
-gap between VR200's tuned bf16 ceiling (9,405 tok/s/GPU) and GB300's tuned
-nvfp4 result — a **6.31×** dense-model difference on otherwise slower silicon.
+gap between VR200's tuned bf16 ceiling (9,635 tok/s/GPU) and GB300's tuned
+nvfp4 result — a **6.16×** dense-model difference on otherwise slower silicon.
 
 ### A1. TransformerEngine ships no `sm_107` cubin and no PTX — **OPEN**
 
