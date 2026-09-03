@@ -123,7 +123,7 @@ empty metric cell always comes with a reason. Codes it emits:
 | `no_cubin_for_arch` | TE ships no cubin for the arch and `te_ptx_entries=0`, so there is no PTX to JIT from and the launch fails outright. bf16 only — use `reference`/`portable`. |
 | `ptxas_no_target` | Bundled `ptxas` has no `sm_<cc>a` target, so Triton and `torch.compile` cannot build. `TORCHDYNAMO_DISABLE=1`. |
 | `cudnn_no_attn_plan` | cuDNN built no fused-attention plan for the arch. `NVTE_UNFUSED_ATTN=1`. |
-| `fp8_dpa_no_backend` | TE has no **fp8 attention** backend for the arch, and every nvfp4/fp8 preset sets `fp8_dot_product_attention=true`. Override both `mixed_precision.` and `model.` copies to `false`. Affects sm_103 as well as sm_107. |
+| `fp8_dpa_no_backend` | **Not arch-related.** Every nvfp4 preset sets `fp8_dot_product_attention=true`, and under `NVFP4BlockScaling` TE disables all three backends: FlashAttention 2 and UnfusedDotProductAttention refuse FP8 attention, and FusedAttention is disabled **unconditionally on the recipe** — `if use_fused_attention and (fp8_recipe.float8_block_scaling() or fp8_recipe.nvfp4())` in `attention/dot_product_attention/utils.py`, with no compute-capability check (contrast the MXFP8 branch above it, which *is* gated on `arch < sm100`). So this fires on any architecture. Override both `mixed_precision.` and `model.` copies to `false`. |
 | `triton_cross_entropy` | TE's fused cross-entropy is Triton and aborts uncatchably. `model.cross_entropy_loss_fusion=false`. |
 | `oom_dense` | Activation memory at this MBS exceeds device memory. MBS=4 was the ceiling for llama3.1 8B on 4 × 284 GB. |
 | `oom_moe` | The `gb300` preset assumes `EP=8` across 8 GPUs, so `EP=4` on one node doubles expert weights per GPU. Lower MBS. |

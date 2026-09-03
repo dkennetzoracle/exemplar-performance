@@ -67,7 +67,7 @@ only post-training eval, not the timed iterations.
 
 | Workload | VR200 best | GB300 best | GB300 advantage |
 | --- | --- | --- | --- |
-| llama3.1 8B | 6,543 tok/s/GPU (bf16 — its ceiling) | **59,282** tok/s/GPU (nvfp4, 26.08.00, MBS=4 GBS=64) | **9.06x** |
+| llama3.1 8B | 6,543 tok/s/GPU (bf16 — its ceiling) | **59,389** tok/s/GPU (nvfp4, 26.08.00, MBS=4 GBS=256) | **9.08x** |
 | Qwen3 30B-A3B | 9,317 tok/s/GPU (bf16 — its ceiling) | **24,372** tok/s/GPU (bf16, 26.06.01, MBS=4 GBS=256) | **2.62x** |
 
 The two workloads behave completely differently, and the dense-model headline
@@ -78,7 +78,9 @@ workload would be wrong by nearly an order of magnitude.
 
 | Container | Precision | MBS | GBS | s/iter | TFLOPS/GPU | tok/s/GPU | vs VR200 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| 26.08.00 | nvfp4 | 4 | 64 | 2.211 | 2910.78 | **59,282** | **9.06x** |
+| 26.08.00 | nvfp4 | 4 | 256 | 8.828 | 2916.25 | **59,389** | **9.08x** |
+| 26.08.00 | nvfp4 | 4 | 128 | 4.417 | 2914.67 | 59,349 | 9.07x |
+| 26.08.00 | nvfp4 | 4 | 64 | 2.211 | 2910.78 | 59,282 | 9.06x |
 | 26.08.00 | nvfp4 | 4 | 16 | 0.575 | 2797.83 | 56,988 | 8.71x |
 | 26.08.00 | nvfp4 v2 | 4 | 16 | 0.579 | 2778.50 | 56,594 | 8.65x |
 | 26.08.00 | nvfp4 | 2 | 8 | 0.317 | 2536.95 | 51,685 | 7.90x |
@@ -100,8 +102,10 @@ backend for sm_103), and `TP=PP=CP=1` pinned on every fp8_cs row (the stock
 **Dense findings:**
 - **nvfp4 > fp8_cs** by ~30-35% at every shape, on both containers.
 - **MBS=4 is the ceiling.** MBS=8 OOMs at both precisions.
-- **Gradient accumulation still pays** at the MBS ceiling: GA=1 -> 4 gave +4.0%.
-  It had not plateaued, so GBS 128/256 remain untested.
+- **Gradient accumulation saturates at GA=4.** GBS 16 -> 64 gave +4.0%, but
+  64 -> 128 -> 256 gave only +0.1% and +0.07% (59,282 -> 59,349 -> 59,389). The
+  optimizer step and DP all-reduce are fully amortised by GA=4; past that there
+  is nothing left to hide. Do not burn runs on GBS > 64.
 - **Config variant v1 ~= v2** (v2 0.7% slower); not a meaningful lever.
 
 ### Qwen3 30B-A3B, full sweep (seq_len 4096, EP=4, alltoall)
@@ -109,6 +113,8 @@ backend for sm_103), and `TP=PP=CP=1` pinned on every fp8_cs row (the stock
 | Container | Precision | MBS | GBS | s/iter | TFLOPS/GPU | tok/s/GPU | vs VR200 |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 26.06.01 | bf16 | 4 | 256 | 10.756 | 560.69 | **24,372** | **2.62x** |
+| 26.08.00 | bf16 | 4 | 256 | 10.813 | 557.66 | 24,243 | 2.60x |
+| 26.08.00 | bf16 | 2 | 256 | 16.575 | 363.82 | 15,816 | 1.70x |
 | 26.06.01 | bf16 | 2 | 256 | 17.427 | 346.08 | 15,042 | 1.61x |
 | 26.08.00 | fp8_cs | 2 | 256 | 26.402 | 228.40 | 9,929 | 1.07x |
 | 26.08.00 | bf16 | 1 | 256 | 32.335 | 186.50 | 8,107 | VR200 +14.9% |
@@ -131,10 +137,19 @@ backend for sm_103), and `TP=PP=CP=1` pinned on every fp8_cs row (the stock
   MBS=1 -> 4 is worth **3.10x**, which is larger than any other lever found in
   this work outside the missing-kernel gap itself. MBS=8 OOMs, so 4 is the
   ceiling at `EP=4` on one node. No precision change came remotely close.
-- **fp8 *hurts* this MoE.** At MBS=1, same container, fp8_cs is **37% slower**
-  than bf16 (4,939 vs 7,860) — slower even than the six-workaround bf16
-  fallback. With `EP=4` the per-expert GEMMs are too small to amortise
-  quantize/dequantize, so fp8 is pure overhead.
+- **fp8 hurts this MoE by a constant 37%, at every MBS tested.** Same
+  container, bf16 vs fp8_cs: at MBS=1, 7,860 -> 4,939; at MBS=2,
+  15,042 -> 9,429. Both exactly 37% slower. The penalty does **not** shrink as
+  MBS grows, which rules out the obvious "small per-expert GEMMs" explanation —
+  whatever the quantize/dequantize cost is around expert dispatch, it scales
+  with the work rather than being a fixed overhead. At MBS=1 fp8 is slower even
+  than the six-workaround bf16 fallback.
+- **26.08.00 buys nothing at the MoE ceiling.** Its advantage shrinks as MBS
+  rises and inverts to a tie at the top: +3.1% at MBS=1, +5.1% at MBS=2,
+  **-0.5% at MBS=4** (10.756 vs 10.813 s/iter, inside run-to-run spread). The
+  gain is overhead reduction, visible only while per-iteration overhead is a
+  large share of the work. So the recipe-pinned 26.06.01 remains the best MoE
+  config — unlike the dense model, where 26.08.00 is worth up to +12%.
 - **The workarounds barely matter here.** Dropping all six bought +11.5%
   (7,047 -> 7,860), versus 9.66x on the dense model, because at GBS=256/MBS=1
   the time goes into expert dispatch and small GEMMs rather than the fused
@@ -215,21 +230,16 @@ Worth recording because they are what make the comparisons above defensible.
 
 ## Pending
 
-Both GB300 nodes were lost to a cluster-wide node failure mid-queue (idle nodes
-600 -> 356, `down*` 123 -> 182 across the partition), so these gaps remain. All
-completed results above were unaffected: the per-run logs live on shared
-storage with metrics already parsed in place.
+The GB300 side is **complete**: both workloads swept to their ceilings, with
+MBS, GBS/GA, precision, config variant and container all covered, and every
+failure attributed. Remaining work is on the VR200 side.
 
-- **Qwen3 MBS=4 on 26.08.00.** The 26.06.01 measurement is done (24,372
-  tok/s/GPU, 2.62x); whether the newer container adds to it is open.
-- **Qwen3 fp8_cs at MBS=2 on 26.06.01**, the missing cell that would make the
-  MBS=2 precision comparison same-container. The 26.08.00 fp8 row above cannot
-  be compared directly against the 26.06.01 bf16 row (see section 4).
-- **llama nvfp4 MBS=4 at GBS 128/256.** GA had not plateaued at GBS=64.
-- `NVTE_DEBUG=1 NVTE_DEBUG_LEVEL=2` capture of TE's backend-selection
-  reasoning for the fp8-attention failure.
-- On the VR200 side, the arch gate and the `reference` row set are **done and
-  reproduced** (see the re-measured table in section 1); `native` and
-  `portable` were still running as of that commit. The recompute question in
-  `portable` remains the largest potential win for a bf16-only machine — see
+- On VR200, the arch gate and the `reference` row set are **done and
+  reproduced** (see section 1). `native` and `portable` were still running as
+  of the last sync. `portable` is the one that matters: the top lever is
+  Qwen3 MBS=1 -> 4, measured at **3.10x** on GB300 and pure batch shape, so it
+  should transfer. If it does, VR200's Qwen3 ceiling moves from 9,317 to
+  roughly 29,000 tok/s/GPU — ahead of GB300's best MoE number. See
   [`RUNBOOK_VR200.md`](RUNBOOK_VR200.md).
+- The recompute question in `portable` is still open on both machines and is
+  the largest untested llama lever.

@@ -227,10 +227,18 @@ Keep these separate; different teams own them.
 2. **Bundled CUDA `ptxas` has no `sm_107a` target.** Independent of TE; breaks
    Triton and `torch.compile`. Unchanged across CUDA 13.2.1 (26.06.01) and
    13.3.0 (26.08.00) while `sm_110`/`sm_121` are present.
-3. **No TE fp8-attention backend, affecting sm_103 too.** Every nvfp4/fp8
-   preset sets `fp8_dot_product_attention=true` and dies with `No dot product
-   attention backend is available` — reproduced on GB300 at MBS=1 and MBS=2.
-   One-line workaround, but the shipped presets are broken for 4-GPU GB300.
+3. **The nvfp4 presets are internally inconsistent, on every architecture.**
+   They set `fp8_dot_product_attention=true`, and under `NVFP4BlockScaling` TE
+   leaves zero viable attention backends, so training dies with `No dot product
+   attention backend is available`. Confirmed from TE's own debug output and
+   then from its source: FlashAttention 2 and UnfusedDotProductAttention refuse
+   FP8 attention, and FusedAttention is disabled by
+   `if use_fused_attention and (fp8_recipe.float8_block_scaling() or fp8_recipe.nvfp4())`
+   in `attention/dot_product_attention/utils.py` — **no compute-capability
+   check**, unlike the MXFP8 branch directly above it which is gated on
+   `arch < sm100`. So this is a preset/feature-support bug, not a missing
+   sm_103 or sm_107 kernel, and it should reproduce on GB200/B200 too. One-line
+   workaround; but as shipped, every nvfp4 preset cannot start.
 4. **`nemo:26.08.00` CUDA-graph capture assert in the eval path.** PyTorch's own
    `INTERNAL ASSERT` text asks for a bug report. Training unaffected;
    `train.eval_iters=0` avoids it. Not present in 26.06.01 (torch 2.12.0a0).
