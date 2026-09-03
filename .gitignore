@@ -48,3 +48,4 @@ plans/
 # Local credential files (never commit)
 .ngc
 .hf
+.nv
