@@ -189,12 +189,16 @@ def parse_log(path: str) -> dict | None:
         status = "FAILED"
         note = CAUSE_TEXT.get(code, "see log")
         if not code:
-            # A diagnosed failure carries a code even with few iterations
-            # (an OOM logs one or two first). An undiagnosed partial run is
-            # either still executing or was killed mid-run -- not a result,
-            # so it must not render as a failure in the comparison table.
-            code = "in_flight" if 0 < iters < 50 else (
-                "unknown" if iters == 0 else "metrics_unparsed")
+            # A diagnosed failure carries a code even with zero or few
+            # iterations (an OOM may log one or two first, or none at all).
+            # For the rest, iteration count cannot tell "still running" from
+            # "crashed at startup" -- both can be 0. launch_local.sh prints
+            # "Log: <path>" once the container exits, either way, so its
+            # absence is the reliable "has not finished" signal. An unfinished
+            # run is not a result and must not render as a failure.
+            finished = re.search(r"^Log: ", txt, re.M) is not None
+            code = ("unknown" if finished else "in_flight") if iters < 50 \
+                else "metrics_unparsed"
             if code == "metrics_unparsed":
                 note = ("training completed but no metrics; run backfill_metrics.sh "
                         "(the parser needs typer -- see setup_images.sh)")
