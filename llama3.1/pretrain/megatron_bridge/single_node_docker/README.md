@@ -647,6 +647,15 @@ deliberately not passed as `--hf_token` on the command line, where it would show
 up in `ps`; the flag is launcher-only upstream and its only rank-visible effect
 is `TRANSFORMERS_OFFLINE=0`, which `env.list` sets directly.
 
+## Changing the run, and power capture
+
+Varying MBS/GBS, sequence length, or run length, and sampling per-GPU power
+alongside a run: **[`TUNING_AND_POWER.md`](TUNING_AND_POWER.md)**. Short
+version — MBS/GBS/`MAX_STEPS` are env vars, sequence length is Hydra-only
+(`EXTRA_HYDRA_OVERRIDES="model.seq_length=4096"`, and *only* that key), and
+`./collect_power.sh -o power.csv -- ./run_bf16_fallback.sh` samples NVML on the
+host for the whole run instead of just the Nsight profile window.
+
 ## Profiling
 
 ```bash
@@ -669,3 +678,7 @@ python3 parse_results_local.py <run_dir>/log-<exp>.out
 `--min-iteration`/`--max-iteration` widen or shift the averaging window, e.g. to
 get a number out of a short `MAX_STEPS` run. Anything other than 35–44 is not
 comparable to published results.
+
+This also matters in the other direction: the end-of-run parse the launcher
+prints is *always* 35–44, so on a long `MAX_STEPS` run it reports the warm-up
+rather than steady state. Re-parse with a later window.
