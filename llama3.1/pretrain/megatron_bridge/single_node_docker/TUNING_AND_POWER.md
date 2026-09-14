@@ -298,9 +298,16 @@ strip/normalise the headers before loading into pandas.
 
 Three things worth telling your teammate up front:
 
-* **Idle is not zero.** These GPUs sit at **388–410 W** idle against a
-  **2300 W** limit — ~1.6 kW for the node before any work starts. Subtract an
-  idle baseline before quoting "training power".
+* **Idle is not zero, and idle is not one number.** Against a **2300 W** limit
+  these GPUs draw **265–277 W each cold** (node idle ~1.09 kW, measured after
+  10 days quiet) but **388–410 W warm** (~1.6 kW, measured minutes after a
+  run). That is a 47% spread on the baseline you are about to subtract, so
+  **capture your own baseline immediately before the run** rather than reusing
+  a number from this doc:
+
+  ```bash
+  ./collect_power.sh -o idle.csv -i 1 -- bash -c 'sleep 60'
+  ```
 * **The first iterations are not steady state.** Power ramps and clocks settle
   over the early iterations, which is why the run should be long and why the
   throughput window should skip the start.
