@@ -334,7 +334,10 @@ The default bring-up config is a poor power load. Measured on 4x sm_107
 | **seq 2048, MBS 16, GBS 128, recompute on** | **934** | 3.11 | **1942-1989** | 1925-1982 | **5,877 W** |
 | seq 2048, MBS 32, GBS 128, recompute on | 934 | 3.11 | 1924-1971 | 1912-1954 | 5,203 W |
 
-\* 15s sampling, so its peak is understated.
+\* 15s sampling. That does **not** understate the peak: the same DCGM load
+sampled at 1s and at 15s peaked at 2293-2302 W and 2293-2309 W respectively, so
+a sustained load's maximum is captured either way. 15-30s is fine; the mean is
+the figure to distrust, because it includes container startup and model init.
 
 **Power tracks compute density, i.e. TFLOPS/GPU.** Doubling achieved TFLOPS
 (465 -> 934) lifted peak power ~50% (1,328 -> 1,989 W), to 86% of the cap. Three
@@ -384,7 +387,8 @@ Same node, TP4, `vr_inference_benchmarks` via `run-sweep.sh --sweep saturate`:
 | Qwen3.6-27B, dense | BF16 | 2031-2068* | 5,241 W |
 | DeepSeek-V4-Flash, MoE | FP8 + FP8 KV | 1428-1465 | 3,736 W |
 
-\* 15s sampling, so understated -- which only strengthens the ordering.
+\* 15s sampling. Verified not to matter for a peak on a sustained load (see
+section 7), and the 600 W gap is far outside any sampling artefact.
 
 FP8 on the bigger model draws **less**, not more. DeepSeek-V4-Flash activates
 10B of 290.9B parameters per token, so it is bandwidth-bound fetching expert
