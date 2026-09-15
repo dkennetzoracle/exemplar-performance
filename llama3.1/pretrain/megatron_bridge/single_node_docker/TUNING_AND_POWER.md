@@ -319,3 +319,104 @@ Three things worth telling your teammate up front:
 
 DCGM is also installed on this node (`dcgmi discovery -l` sees all 4 GPUs) if
 your teammate wants field-group profiling instead of NVML polling.
+
+---
+
+## 7. Driving power up: measured
+
+The default bring-up config is a poor power load. Measured on 4x sm_107
+(2300 W cap each), 1s sampling unless noted, container 26.08.00:
+
+| config | TFLOPS/GPU | s/iter | max W/GPU | p95 W | node mean |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| seq 8192, MBS 1, GBS 8, recompute **off** | 465 | 1.73 | 1328-1358* | - | 3,864 W |
+| seq 2048, MBS 8, GBS 64, recompute on | 918 | 1.58 | 1921-1967 | 1913-1960 | 5,099 W |
+| **seq 2048, MBS 16, GBS 128, recompute on** | **934** | 3.11 | **1942-1989** | 1925-1982 | **5,877 W** |
+| seq 2048, MBS 32, GBS 128, recompute on | 934 | 3.11 | 1924-1971 | 1912-1954 | 5,203 W |
+
+\* 15s sampling, so its peak is understated.
+
+**Power tracks compute density, i.e. TFLOPS/GPU.** Doubling achieved TFLOPS
+(465 -> 934) lifted peak power ~50% (1,328 -> 1,989 W), to 86% of the cap. Three
+things get you there, and the first is by far the biggest:
+
+* **Shorter sequences.** The fallback runs `NVTE_UNFUSED_ATTN=1`, which
+  materialises the score matrix -- O(seq^2) and memory-bound. Every second spent
+  there is a second the tensor cores are idle. 8192 -> 2048 is 16x less attention
+  work per sequence, so the GEMMs dominate.
+* **Bigger MBS, which the shorter sequence pays for.** Larger GEMMs, better
+  tensor-core occupancy. MBS 16 is the plateau: MBS 32 measured *identical*
+  934 TFLOPS / 3.11 s/iter, because at GBS 128 with DP 4 it reduces to GA=1 and
+  the micro-batch shape stops changing.
+* **Recompute ON, not off.** Backwards from the throughput advice in section 5.
+  Recompute re-runs forward passes, so it burns extra FLOPs for no extra tokens
+  -- exactly what a power load wants, and it buys the memory headroom for the
+  larger MBS. The framework's TFLOPS counter reports *model* FLOPs, so the real
+  executed total is higher still.
+
+**Why it stops at ~86%.** Two ceilings are not tunable from here: there is no
+fp8/nvfp4 tensor-core path (TE ships no sm_107 cubins) and no fused attention
+(cuDNN builds no sm_107 plan). DCGM's `targeted_power` reaches the cap with
+DGEMM, which training cannot use. Closing the rest needs kernels in the
+container -- see `perf_matrix/ISSUES.md`.
+
+### Power-maximising training command
+
+```bash
+cd llama3.1/pretrain/megatron_bridge/single_node_docker
+export LLMB_INSTALL=/mnt/nvme/llmb HF_TOKEN=unused OFFLINE=true
+
+MAX_STEPS=580 MBS=16 GBS=128 \
+RUN_CONF_IMAGE=nvcr.io/nvidia/nemo:26.08.00 \
+EXTRA_HYDRA_OVERRIDES="model.seq_length=2048" \
+./collect_power.sh -o ~/power-training-$(date +%F).csv -i 30 -- ./run_bf16_fallback.sh
+```
+
+30 min at 3.11 s/iter. Note there is no `recompute_granularity=null` here --
+leaving the fallback's recompute in place is deliberate.
+
+## 8. Inference power, and why FP8 lost
+
+Same node, TP4, `vr_inference_benchmarks` via `run-sweep.sh --sweep saturate`:
+
+| model | precision | max W/GPU | node mean |
+| --- | --- | ---: | ---: |
+| Qwen3.6-27B, dense | BF16 | 2031-2068* | 5,241 W |
+| DeepSeek-V4-Flash, MoE | FP8 + FP8 KV | 1428-1465 | 3,736 W |
+
+\* 15s sampling, so understated -- which only strengthens the ordering.
+
+FP8 on the bigger model draws **less**, not more. DeepSeek-V4-Flash activates
+10B of 290.9B parameters per token, so it is bandwidth-bound fetching expert
+weights rather than compute-bound, and FP8 shrinks the bytes per MAC without
+removing the bottleneck. For a power ceiling, **arithmetic density beats
+precision and beats parameter count**: pick the dense model.
+
+The repo's own numbers go further -- `saturate.sh:8-28` measured 4x TP1 Qwen at
+2095 W/GPU against 1850 W/GPU for 1x TP4, because 4 independent replicas have
+no tensor-parallel collectives to stall on. If the goal is purely maximum
+inference power rather than a TP4 datapoint, `saturate.sh` unmodified is the
+stronger load.
+
+## 9. Sequencing the three power tests
+
+Run them one at a time -- DCGM diag needs the GPUs to itself, and they cannot
+share anyway. Put the inference run **last**:
+
+`run-sweep.sh` leaks its vLLM server. `vllm_launch` bare-metal runs
+`"$VLLM_BIN" "$@"` inside a shell function, so `SERVER_PID=$!`
+(`run-sweep.sh:88`) captures the function's *subshell*, not the server.
+Teardown kills the subshell and the real server is reparented to init, still
+holding ~257 GB per GPU. The next job then dies with a misleading OOM --
+"11.32 GiB is free" while the process itself only asked for 13.49 GiB. The
+docker path kills by container name and is immune, which is why GB300 never
+sees it. After any inference run:
+
+```bash
+pkill -f 'VLLM::'; pkill -f 'venv_vllm/bin/vllm'; sleep 10
+nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv
+```
+
+Also note the training job exits **1** even on a fully successful run: a
+`CUDACachingAllocator.cpp:3113` assert fires during shutdown after the last
+iteration. Check the iteration count, not the exit code.
